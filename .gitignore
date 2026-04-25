@@ -23,3 +23,9 @@ go.work.sum
 
 # env file
 .env
+
+# ECDICT 原始词典（63MB，由脚本按需下载，不纳入版本管理）
+data/ecdict/
+
+# enrichment 中间产物
+data/wordbooks/ket-a2-key.unmatched.json
