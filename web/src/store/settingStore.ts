@@ -10,6 +10,8 @@ export const useSettingStore = defineStore('setting', {
     batchSize: 5,
     /** 每日目标 */
     dailyGoal: 20,
+    /** 当前使用的词典 */
+    wordbook: 'KET',
   }),
   actions: {
     setBatchSize(n: number) {

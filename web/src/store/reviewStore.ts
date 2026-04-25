@@ -1,12 +1,14 @@
 import { defineStore } from 'pinia'
 import type { ReviewQuality } from '@/types/api'
 import type { ReviewRecord, Word } from '@/types/word'
-import { mockWords } from '@/mock/words'
+import { fetchTodayWords, advanceProgress } from '@/api/word'
 import { useSettingStore } from './settingStore'
 
 interface ReviewState {
   /** 今日所有待复习单词（M1 从 mock；M2 从 /api/words/today） */
   dailyQueue: Word[]
+  /** 该词库是否已全部学完 */
+  wordbookCompleted: boolean
   /** 今日总量（= dailyQueue.length） */
   dailyTotal: number
   /** 今日已完成数量 */
@@ -26,6 +28,7 @@ interface ReviewState {
 export const useReviewStore = defineStore('review', {
   state: (): ReviewState => ({
     dailyQueue: [],
+    wordbookCompleted: false,
     dailyTotal: 0,
     dailyCompleted: 0,
     sessionQueue: [],
@@ -56,12 +59,29 @@ export const useReviewStore = defineStore('review', {
   },
 
   actions: {
-    /** 初始化今日队列（M1：从 mock；M2：替换为 fetchTodayWords） */
-    initDaily() {
-      this.dailyQueue = [...mockWords]
-      this.dailyTotal = this.dailyQueue.length
+    /** 初始化今日队列：从服务器获取今日单词 */
+    async initDaily() {
+      const setting = useSettingStore()
+      const response = await fetchTodayWords(setting.wordbook)
+      if (response.completed) {
+        this.wordbookCompleted = true
+        this.dailyQueue = []
+        this.dailyTotal = 0
+        this.dailyCompleted = 0
+        return
+      }
+      this.wordbookCompleted = false
+      this.dailyQueue = response.words
+      this.dailyTotal = response.words.length
       this.dailyCompleted = 0
       this.history = []
+      this.startNextSession()
+    },
+
+    /** 完成当前批次，推进服务器 offset，然后开始下一批 */
+    async completeSession() {
+      const setting = useSettingStore()
+      advanceProgress(setting.wordbook, this.sessionQueue.length).catch(console.warn)
       this.startNextSession()
     },
 

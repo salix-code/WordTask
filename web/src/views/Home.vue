@@ -8,9 +8,8 @@ const router = useRouter()
 const review = useReviewStore()
 const setting = useSettingStore()
 
-onMounted(() => {
-  // 进入首页时尚未初始化，则先加载 mock
-  if (review.dailyTotal === 0) review.initDaily()
+onMounted(async () => {
+  if (review.dailyTotal === 0) await review.initDaily()
 })
 
 function startReview() {

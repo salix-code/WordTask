@@ -7,26 +7,25 @@ import ActionBars from '@/components/review/ActionBars.vue'
 import SessionSummary from '@/components/review/SessionSummary.vue'
 import { useReviewStore } from '@/store/reviewStore'
 import type { ReviewQuality } from '@/types/api'
-// M2 接入：import { submitReview } from '@/api/word'
+import { submitReview } from '@/api/word'
 
 const router = useRouter()
 const review = useReviewStore()
 
-onMounted(() => {
-  if (review.sessionQueue.length === 0) review.initDaily()
+onMounted(async () => {
+  if (review.sessionQueue.length === 0) await review.initDaily()
 })
 
 const showSummary = computed(() => review.isSessionFinished)
 
 function handleRate(q: ReviewQuality) {
   review.submitCurrentWord(q)
-  // M2：异步上报，不阻塞 UI
-  // submitReview(review.history.at(-1)!.wordId, q).catch(console.warn)
+  submitReview(review.history.at(-1)!.wordId, q).catch(console.warn)
 }
 
-function onContinue() {
+async function onContinue() {
   if (review.dailyQueue.length === 0) return
-  review.startNextSession()
+  await review.completeSession()
 }
 
 function onGoHome() {
@@ -48,6 +47,14 @@ function onGoHome() {
 
     <template v-else-if="showSummary">
       <SessionSummary @continue="onContinue" @home="onGoHome" />
+    </template>
+
+    <template v-else-if="review.wordbookCompleted">
+      <div class="flex-1 flex flex-col items-center justify-center gap-4 text-base-content/60">
+        <div class="text-5xl">🎉</div>
+        <div class="text-lg font-semibold">词库已全部学完！</div>
+        <button class="btn btn-outline" @click="onGoHome">返回首页</button>
+      </div>
     </template>
 
     <template v-else>

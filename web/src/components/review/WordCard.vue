@@ -54,7 +54,7 @@ function onClick() {
           <li
             v-for="(def, i) in word.definitions"
             :key="i"
-            class="text-base"
+            style="font-size: 1.25rem; line-height: 1.75rem;"
           >
             <span v-if="def.pos" class="badge badge-outline badge-sm mr-2">{{ def.pos }}</span>
             {{ def.meaning }}
