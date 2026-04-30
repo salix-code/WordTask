@@ -159,7 +159,4 @@ go vet ./...
 - 修改前请先阅读相关模块，避免破坏既有约定。
 - **不要删除 `.codebuddy/` 目录**（其中包含项目持久化数据）。
 - 数据库文件（`*.db` / `*.sqlite`）已在 `.gitignore` 中忽略。
-- TODO:
-  - [ ] M2：搭建 `server/` 目录与 `/api/words/today`、`/api/words/review` 接口。
-  - [ ] M3：接入 JWT + 多账号映射。
-  - [ ] M4：集成 go-fsrs，落地 Progress 表与下次复习时间计算。
+
