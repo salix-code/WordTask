@@ -7,6 +7,8 @@ import { useSettingStore } from './settingStore'
 interface ReviewState {
   /** 今日所有待复习单词（M1 从 mock；M2 从 /api/words/today） */
   dailyQueue: Word[]
+  /** dailyQueue 中下一个待切入 session 的位置 */
+  dailyIndex: number
   /** 该词库是否已全部学完 */
   wordbookCompleted: boolean
   /** 今日总量（= dailyQueue.length） */
@@ -28,6 +30,7 @@ interface ReviewState {
 export const useReviewStore = defineStore('review', {
   state: (): ReviewState => ({
     dailyQueue: [],
+    dailyIndex: 0,
     wordbookCompleted: false,
     dailyTotal: 0,
     dailyCompleted: 0,
@@ -50,6 +53,10 @@ export const useReviewStore = defineStore('review', {
     isDailyFinished(state): boolean {
       return state.dailyCompleted >= state.dailyTotal && state.dailyTotal > 0
     },
+    /** dailyQueue 中还未切入 session 的剩余数量 */
+    dailyRemaining(state): number {
+      return Math.max(0, state.dailyQueue.length - state.dailyIndex)
+    },
     /** 当前批次进度字符串：2/5 */
     sessionProgressText(state): string {
       const total = state.sessionQueue.length
@@ -59,6 +66,23 @@ export const useReviewStore = defineStore('review', {
   },
 
   actions: {
+    /**
+     * 重置所有与当前词库/周期相关的状态。
+     * 在录入新周期成功、切换词库等场景调用，触发下一次 initDaily 时重新拉取。
+     */
+    reset() {
+      this.dailyQueue = []
+      this.dailyIndex = 0
+      this.wordbookCompleted = false
+      this.dailyTotal = 0
+      this.dailyCompleted = 0
+      this.sessionQueue = []
+      this.sessionIndex = 0
+      this.flipped = false
+      this.sessionResults = []
+      this.history = []
+    },
+
     /** 初始化今日队列：从服务器获取今日单词 */
     async initDaily() {
       const setting = useSettingStore()
@@ -66,12 +90,14 @@ export const useReviewStore = defineStore('review', {
       if (response.completed) {
         this.wordbookCompleted = true
         this.dailyQueue = []
+        this.dailyIndex = 0
         this.dailyTotal = 0
         this.dailyCompleted = 0
         return
       }
       this.wordbookCompleted = false
       this.dailyQueue = response.words
+      this.dailyIndex = 0
       this.dailyTotal = response.words.length
       this.dailyCompleted = 0
       this.history = []
@@ -83,11 +109,13 @@ export const useReviewStore = defineStore('review', {
       this.startNextSession()
     },
 
-    /** 从 dailyQueue 中切出下一批（默认 5 个） */
+    /** 从 dailyQueue[dailyIndex ...] 中切出下一批（默认 5 个） */
     startNextSession() {
       const setting = useSettingStore()
-      const batch = this.dailyQueue.splice(0, setting.batchSize)
-      this.sessionQueue = batch
+      const start = this.dailyIndex
+      const end = Math.min(start + setting.batchSize, this.dailyQueue.length)
+      this.sessionQueue = this.dailyQueue.slice(start, end)
+      this.dailyIndex = end
       this.sessionIndex = 0
       this.flipped = false
       this.sessionResults = []

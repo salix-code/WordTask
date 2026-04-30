@@ -48,6 +48,10 @@ func main() {
 		{
 			progress.POST("/advance", api.AdvanceProgress)
 		}
+		cycles := apiGroup.Group("/cycles")
+		{
+			cycles.POST("/setup", api.SetupCycle)
+		}
 	}
 
 	addr := ":8080"

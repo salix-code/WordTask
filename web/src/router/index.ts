@@ -17,6 +17,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Login.vue'),
   },
   {
+    path: '/setup-cycle',
+    name: 'SetupCycle',
+    component: () => import('@/views/SetupCycle.vue'),
+  },
+  {
     path: '/:pathMatch(.*)*',
     redirect: '/',
   },

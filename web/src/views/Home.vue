@@ -17,6 +17,10 @@ function startReview() {
   if (review.isDailyFinished) review.initDaily()
   router.push('/review')
 }
+
+function goSetupCycle() {
+  router.push('/setup-cycle')
+}
 </script>
 
 <template>
@@ -39,6 +43,10 @@ function startReview() {
 
         <button class="btn btn-primary btn-wide min-h-touch" @click="startReview">
           开始背诵
+        </button>
+
+        <button class="btn btn-outline btn-wide btn-sm" @click="goSetupCycle">
+          录入单词表
         </button>
       </div>
     </div>

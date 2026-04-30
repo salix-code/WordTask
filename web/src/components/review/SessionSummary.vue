@@ -17,7 +17,7 @@ const stats = computed(() => {
   return { total, known, vague, forgot }
 })
 
-const hasMore = computed(() => review.dailyQueue.length > 0)
+const hasMore = computed(() => review.dailyRemaining > 0)
 </script>
 
 <template>

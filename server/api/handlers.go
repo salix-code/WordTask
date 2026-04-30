@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"log"
 
 	"github.com/gin-gonic/gin"
@@ -78,4 +79,34 @@ type AdvanceProgressRequest struct {
 // Per-word progress is now handled by SubmitReview (quality=known).
 func AdvanceProgress(c *gin.Context) {
 	OK(c, gin.H{"ok": true})
+}
+
+// SetupCycleRequest is the request body for POST /api/cycles/setup.
+type SetupCycleRequest struct {
+	UserID   string   `json:"userId"   binding:"required"`
+	Wordbook string   `json:"wordbook" binding:"required"`
+	Words    []string `json:"words"    binding:"required"`
+}
+
+// SetupCycle handles POST /api/cycles/setup.
+// It validates the submitted word list and, if all words pass, creates a new cycle.
+func SetupCycle(c *gin.Context) {
+	var req SetupCycleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "invalid params: "+err.Error())
+		return
+	}
+
+	result, err := service.ValidateAndCreateCycle(req.UserID, req.Wordbook, req.Words)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidCycleInput) {
+			Fail(c, 400, err.Error())
+			return
+		}
+		log.Printf("[SetupCycle] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	OK(c, result)
 }

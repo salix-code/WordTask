@@ -26,7 +26,7 @@ function handleRate(q: ReviewQuality) {
 }
 
 async function onContinue() {
-  if (review.dailyQueue.length === 0) return
+  if (review.dailyRemaining === 0) return
   await review.completeSession()
 }
 
