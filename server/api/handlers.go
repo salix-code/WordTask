@@ -38,12 +38,14 @@ func GetTodayWords(c *gin.Context) {
 
 // ReviewRequest is the request body for POST /api/words/review.
 type ReviewRequest struct {
-	WordID int    `json:"word_id" binding:"required"`
-	Grade  string `json:"grade" binding:"required,oneof=red yellow green"`
+	UserID   string `json:"userId" binding:"required"`
+	Wordbook string `json:"wordbook" binding:"required"`
+	WordID   uint   `json:"wordId" binding:"required"`
+	Quality  string `json:"quality" binding:"required,oneof=forgot vague known"`
 }
 
 // SubmitReview handles POST /api/words/review.
-// Grade persistence will be wired to FSRS in M4.
+// When quality is 'known', the word is marked as known in the active cycle.
 func SubmitReview(c *gin.Context) {
 	var req ReviewRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -51,35 +53,29 @@ func SubmitReview(c *gin.Context) {
 		return
 	}
 
-	log.Printf("[Review] word_id=%d, grade=%s", req.WordID, req.Grade)
+	if req.Quality == "known" {
+		if err := service.MarkWordKnown(req.UserID, req.Wordbook, req.WordID); err != nil {
+			log.Printf("[SubmitReview] MarkWordKnown error: %v", err)
+			Fail(c, 500, "internal server error")
+			return
+		}
+	}
 
 	OK(c, gin.H{
-		"word_id":        req.WordID,
-		"grade":          req.Grade,
-		"next_review_at": nil,
+		"word_id": req.WordID,
+		"quality": req.Quality,
 	})
 }
 
-// AdvanceProgressRequest is the request body for POST /api/progress/advance.
+// AdvanceProgressRequest is kept for backwards compatibility.
 type AdvanceProgressRequest struct {
-	UserID   string `json:"userId" binding:"required"`
-	Wordbook string `json:"wordbook" binding:"required"`
-	Count    int    `json:"count" binding:"required,min=1"`
+	UserID   string `json:"userId"`
+	Wordbook string `json:"wordbook"`
+	Count    int    `json:"count"`
 }
 
-// AdvanceProgress handles POST /api/progress/advance.
+// AdvanceProgress is a no-op kept for backwards compatibility.
+// Per-word progress is now handled by SubmitReview (quality=known).
 func AdvanceProgress(c *gin.Context) {
-	var req AdvanceProgressRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "invalid params: "+err.Error())
-		return
-	}
-
-	if err := service.AdvanceProgress(req.UserID, req.Wordbook, req.Count); err != nil {
-		log.Printf("[AdvanceProgress] error: %v", err)
-		Fail(c, 500, "internal server error")
-		return
-	}
-
 	OK(c, gin.H{"ok": true})
 }

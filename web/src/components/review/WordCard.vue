@@ -19,6 +19,11 @@ function onSpeak(e: MouseEvent) {
 function onClick() {
   emit('flip')
 }
+
+const VOWELS = new Set('aeiouAEIOU')
+function charClass(ch: string) {
+  return VOWELS.has(ch) ? 'text-primary' : ''
+}
 </script>
 
 <template>
@@ -38,33 +43,39 @@ function onClick() {
         >
           <span class="text-xl">🔊</span>
         </button>
-        <div class="text-4xl sm:text-5xl font-bold tracking-tight">{{ word.text }}</div>
-        <div v-if="word.phonetic" class="mt-3 text-base text-base-content/60">
-          {{ word.phonetic }}
+        <div class="flex flex-col items-center justify-center gap-4">
+          <div class="text-6xl sm:text-8xl font-bold tracking-tight text-center">
+            <span v-for="(ch, i) in word.text" :key="i" :class="charClass(ch)">{{ ch }}</span>
+          </div>
+          <div v-if="word.phonetic" class="text-2xl sm:text-3xl text-base-content/60 text-center">
+            /{{ word.phonetic }}/
+          </div>
         </div>
-        <div class="mt-auto text-xs text-base-content/40">点击卡片查看释义</div>
+        <div class="absolute bottom-5 text-xs text-base-content/40">点击卡片查看释义</div>
       </div>
 
       <!-- 反面：释义 + 例句 -->
       <div
-        class="flip-card-face flip-card-back absolute inset-0 rounded-3xl bg-base-100 shadow-xl border border-base-300 p-6 overflow-auto"
+        class="flip-card-face flip-card-back absolute inset-0 rounded-3xl bg-base-100 shadow-xl border border-base-300 pt-12 px-6 pb-6 overflow-auto"
       >
-        <div class="text-2xl font-semibold mb-3">{{ word.text }}</div>
-        <ul class="space-y-1 mb-4">
+        <div class="text-3xl font-semibold mb-4">
+          <span v-for="(ch, i) in word.text" :key="i" :class="charClass(ch)">{{ ch }}</span>
+        </div>
+        <ul class="space-y-2 mb-5">
           <li
             v-for="(def, i) in word.definitions"
             :key="i"
-            style="font-size: 1.25rem; line-height: 1.75rem;"
+            style="font-size: 1.5rem; line-height: 2rem;"
           >
-            <span v-if="def.pos" class="badge badge-outline badge-sm mr-2">{{ def.pos }}</span>
+            <span v-if="def.pos" class="badge badge-outline badge-lg mr-2 text-base">{{ def.pos }}</span>
             {{ def.meaning }}
           </li>
         </ul>
-        <div v-if="word.examples && word.examples.length" class="divider text-xs">例句</div>
-        <ul class="space-y-2">
-          <li v-for="(ex, i) in word.examples" :key="i" class="text-sm">
+        <div v-if="word.examples && word.examples.length" class="divider text-sm">例句</div>
+        <ul class="space-y-3">
+          <li v-for="(ex, i) in word.examples" :key="i" class="text-lg">
             <div class="text-base-content/90">{{ ex.en }}</div>
-            <div v-if="ex.zh" class="text-base-content/60">{{ ex.zh }}</div>
+            <div v-if="ex.zh" class="text-base-content/60 text-lg">{{ ex.zh }}</div>
           </li>
         </ul>
       </div>

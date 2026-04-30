@@ -27,20 +27,15 @@ export function fetchTodayWords(wordbook: string): Promise<TodayWordsResponse> {
     })
 }
 
-/** 通知服务器完成了一批，推进 offset */
-export function advanceProgress(wordbook: string, count: number): Promise<void> {
+/** 提交一次复习结果；quality='known' 时后端将单词标记为已掌握 */
+export function submitReview(wordId: string, quality: ReviewQuality, wordbook: string): Promise<void> {
   return http
-    .post('/progress/advance', {
+    .post('/words/review', {
       userId: '0000-0000-0000-0000',
       wordbook,
-      count,
+      wordId: Number(wordId),
+      quality,
     })
     .then(() => void 0)
 }
 
-/** 提交一次复习结果 */
-export function submitReview(wordId: string, quality: ReviewQuality): Promise<void> {
-  return http
-    .post('/words/review', { wordId, quality, reviewedAt: Date.now() })
-    .then(() => void 0)
-}

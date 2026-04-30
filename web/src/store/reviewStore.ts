@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import type { ReviewQuality } from '@/types/api'
 import type { ReviewRecord, Word } from '@/types/word'
-import { fetchTodayWords, advanceProgress } from '@/api/word'
+import { fetchTodayWords } from '@/api/word'
 import { useSettingStore } from './settingStore'
 
 interface ReviewState {
@@ -78,10 +78,8 @@ export const useReviewStore = defineStore('review', {
       this.startNextSession()
     },
 
-    /** 完成当前批次，推进服务器 offset，然后开始下一批 */
+    /** 完成当前批次，开始下一批（进度已通过 submitReview per-word 上报） */
     async completeSession() {
-      const setting = useSettingStore()
-      advanceProgress(setting.wordbook, this.sessionQueue.length).catch(console.warn)
       this.startNextSession()
     },
 

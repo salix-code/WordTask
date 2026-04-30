@@ -6,11 +6,13 @@ import WordCard from '@/components/review/WordCard.vue'
 import ActionBars from '@/components/review/ActionBars.vue'
 import SessionSummary from '@/components/review/SessionSummary.vue'
 import { useReviewStore } from '@/store/reviewStore'
+import { useSettingStore } from '@/store/settingStore'
 import type { ReviewQuality } from '@/types/api'
 import { submitReview } from '@/api/word'
 
 const router = useRouter()
 const review = useReviewStore()
+const setting = useSettingStore()
 
 onMounted(async () => {
   if (review.sessionQueue.length === 0) await review.initDaily()
@@ -20,7 +22,7 @@ const showSummary = computed(() => review.isSessionFinished)
 
 function handleRate(q: ReviewQuality) {
   review.submitCurrentWord(q)
-  submitReview(review.history.at(-1)!.wordId, q).catch(console.warn)
+  submitReview(review.history.at(-1)!.wordId, q, setting.wordbook).catch(console.warn)
 }
 
 async function onContinue() {
