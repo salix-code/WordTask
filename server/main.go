@@ -48,6 +48,8 @@ func main() {
 		{
 			words.GET("/today", api.GetTodayWords)
 			words.POST("/review", api.SubmitReview)
+			words.GET("/review/due", api.GetReviewDueWords)
+			words.POST("/review/revision", api.SubmitRevision)
 		}
 		progress := apiGroup.Group("/progress")
 		{

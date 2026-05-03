@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"log"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -38,6 +39,38 @@ func GetTodayWords(c *gin.Context) {
 	OK(c, result)
 }
 
+// GetReviewDueWords handles GET /api/words/review/due?userId=xxx&wordbook=KET&limit=5
+func GetReviewDueWords(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		Fail(c, 400, "userId is required")
+		return
+	}
+	wordbook := c.Query("wordbook")
+	if wordbook == "" {
+		Fail(c, 400, "wordbook is required")
+		return
+	}
+
+	limit := 0
+	if raw := c.Query("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			Fail(c, 400, "limit must be a positive integer")
+			return
+		}
+		limit = parsed
+	}
+
+	result, err := service.GetDueReviewWords(userID, wordbook, limit)
+	if err != nil {
+		log.Printf("[GetReviewDueWords] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+	OK(c, result)
+}
+
 // ReviewRequest is the request body for POST /api/words/review.
 type ReviewRequest struct {
 	UserID   string `json:"userId" binding:"required"`
@@ -61,6 +94,26 @@ func SubmitReview(c *gin.Context) {
 			Fail(c, 500, "internal server error")
 			return
 		}
+	}
+
+	OK(c, gin.H{
+		"word_id": req.WordID,
+		"quality": req.Quality,
+	})
+}
+
+// SubmitRevision handles POST /api/words/review/revision.
+func SubmitRevision(c *gin.Context) {
+	var req ReviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "invalid params: "+err.Error())
+		return
+	}
+
+	if err := service.SubmitRevision(req.UserID, req.Wordbook, req.WordID, req.Quality); err != nil {
+		log.Printf("[SubmitRevision] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
 	}
 
 	OK(c, gin.H{

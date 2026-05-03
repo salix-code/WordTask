@@ -25,7 +25,14 @@ func Init(dsn string) error {
 		return err
 	}
 
-	if err := db.AutoMigrate(&model.Account{}, &model.Word{}, &model.UserProgress{}, &model.Cycle{}, &model.WordCycle{}); err != nil {
+	if err := db.AutoMigrate(
+		&model.Account{},
+		&model.Word{},
+		&model.UserProgress{},
+		&model.Cycle{},
+		&model.WordCycle{},
+		&model.ReviewProgress{},
+	); err != nil {
 		return err
 	}
 
