@@ -63,6 +63,7 @@ func main() {
 			cycles.POST("/setup", api.SetupCycle)
 			cycles.GET("/current", api.GetCurrentCycle)
 			cycles.PUT("/current", api.UpdateCycle)
+			cycles.DELETE("/all", api.ClearAllCycles)
 		}
 	}
 

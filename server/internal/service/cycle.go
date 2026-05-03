@@ -157,6 +157,45 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 	return &SetupCycleResult{Ok: true, Results: results}, nil
 }
 
+// ClearAllCycles deletes every cycle (and their word_cycle rows) for the given
+// user + wordbook, and resets the user's completed_count to 0. This allows the
+// user to start fresh from scratch.
+func ClearAllCycles(userID, wordbook string) error {
+	return db.DB.Transaction(func(tx *gorm.DB) error {
+		// Collect cycle IDs belonging to this user+wordbook.
+		var cycleIDs []uint
+		if err := tx.Model(&model.Cycle{}).
+			Where("user_id = ? AND wordbook = ?", userID, wordbook).
+			Pluck("id", &cycleIDs).Error; err != nil {
+			return fmt.Errorf("query cycle ids: %w", err)
+		}
+
+		if len(cycleIDs) > 0 {
+			// Delete word_cycle rows first (foreign-key order).
+			if err := tx.Where("cycle_id IN ?", cycleIDs).
+				Delete(&model.WordCycle{}).Error; err != nil {
+				return fmt.Errorf("delete word_cycles: %w", err)
+			}
+			// Delete the cycles themselves.
+			if err := tx.Where("id IN ?", cycleIDs).
+				Delete(&model.Cycle{}).Error; err != nil {
+				return fmt.Errorf("delete cycles: %w", err)
+			}
+		}
+
+		// Reset progress counter.
+		if err := tx.Model(&model.UserProgress{}).
+			Where("user_id = ? AND wordbook = ?", userID, wordbook).
+			Updates(map[string]interface{}{
+				"completed_count": 0,
+			}).Error; err != nil {
+			return fmt.Errorf("reset user progress: %w", err)
+		}
+
+		return nil
+	})
+}
+
 // CurrentCycleWord holds a word's term and its status within the ongoing cycle.
 type CurrentCycleWord struct {
 	Term   string `json:"term"`

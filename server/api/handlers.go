@@ -168,6 +168,28 @@ func UpdateCycle(c *gin.Context) {
 	OK(c, result)
 }
 
+// ClearAllCycles handles DELETE /api/cycles/all?userId=xxx&wordbook=KET
+func ClearAllCycles(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		Fail(c, 400, "userId is required")
+		return
+	}
+	wordbook := c.Query("wordbook")
+	if wordbook == "" {
+		Fail(c, 400, "wordbook is required")
+		return
+	}
+
+	if err := service.ClearAllCycles(userID, wordbook); err != nil {
+		log.Printf("[ClearAllCycles] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	OK(c, gin.H{"ok": true})
+}
+
 // LoginRequest is the request body for POST /api/account/login.
 type LoginRequest struct {
 	AccountName string `json:"accountName" binding:"required"`
