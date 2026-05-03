@@ -1,8 +1,9 @@
-import http from './index'
+import { http } from './index'
 import type { SetupCycleResult } from '@/types/cycle'
+import { useUserStore } from '@/store/userStore'
 
 export interface SetupCyclePayload {
-  userId: string
+  userId: number | null
   wordbook: string
   words: string[]
 }
@@ -13,8 +14,13 @@ export interface SetupCyclePayload {
  *   ok=true  → 所有单词有效，周期已创建
  *   ok=false → 存在问题单词，results 中每项均有 status 标记
  */
-export function setupCycle(payload: SetupCyclePayload): Promise<SetupCycleResult> {
+export function setupCycle(payload: Omit<SetupCyclePayload, 'userId'>): Promise<SetupCycleResult> {
+  const userStore = useUserStore()
+  const fullPayload: SetupCyclePayload = {
+    ...payload,
+    userId: userStore.userId,
+  }
   return http
-    .post<SetupCycleResult>('/cycles/setup', payload)
+    .post<SetupCycleResult>('/cycles/setup', fullPayload)
     .then((r) => r.data)
 }

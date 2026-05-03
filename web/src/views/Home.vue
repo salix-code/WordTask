@@ -30,24 +30,41 @@ function goSetupCycle() {
         <div class="text-3xl font-bold">WordTask</div>
         <p class="text-base-content/70">科学记忆法 · 每组 {{ setting.batchSize }} 个单词</p>
 
-        <div class="stats stats-horizontal shadow w-full">
-          <div class="stat place-items-center">
-            <div class="stat-title">今日总量</div>
-            <div class="stat-value text-primary">{{ review.dailyTotal }}</div>
+        <!-- 没有进行中的周期 -->
+        <template v-if="review.noCycle">
+          <div class="alert alert-warning w-full">
+            <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+            <span>暂无进行中的单词周期，请先录入单词表。</span>
           </div>
-          <div class="stat place-items-center">
-            <div class="stat-title">已完成</div>
-            <div class="stat-value">{{ review.dailyCompleted }}</div>
+          <button class="btn btn-primary btn-wide min-h-touch" @click="goSetupCycle">
+            录入单词表
+          </button>
+        </template>
+
+        <!-- 正常状态 -->
+        <template v-else>
+          <div class="stats stats-horizontal shadow w-full">
+            <div class="stat place-items-center">
+              <div class="stat-title">今日总量</div>
+              <div class="stat-value text-primary">{{ review.dailyTotal }}</div>
+            </div>
+            <div class="stat place-items-center">
+              <div class="stat-title">已完成</div>
+              <div class="stat-value">{{ review.dailyCompleted }}</div>
+            </div>
           </div>
-        </div>
 
-        <button class="btn btn-primary btn-wide min-h-touch" @click="startReview">
-          开始背诵
-        </button>
+          <button class="btn btn-primary btn-wide min-h-touch" @click="startReview">
+            开始背诵
+          </button>
 
-        <button class="btn btn-outline btn-wide btn-sm" @click="goSetupCycle">
-          录入单词表
-        </button>
+          <button class="btn btn-outline btn-wide btn-sm" @click="goSetupCycle">
+            录入单词表
+          </button>
+        </template>
       </div>
     </div>
   </div>

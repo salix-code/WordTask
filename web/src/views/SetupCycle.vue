@@ -19,7 +19,6 @@ const errorMsg = ref('')
 
 // 当前 wordbook 固定为 KET（与现有 word.ts 保持一致，后续可扩展为 props/store）
 const wordbook = 'KET'
-const userId = '0000-0000-0000-0000'
 
 const canSubmit = computed(() => tags.value.length === CYCLE_SIZE && !submitting.value)
 
@@ -82,7 +81,7 @@ async function submit() {
   errorMsg.value = ''
   results.value = []
   try {
-    const res = await setupCycle({ userId, wordbook, words: tags.value })
+    const res = await setupCycle({ wordbook, words: tags.value })
     results.value = res.results
     if (res.ok) {
       successMsg.value = '周期创建成功！'

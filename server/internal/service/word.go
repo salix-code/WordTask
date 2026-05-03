@@ -38,6 +38,7 @@ type WordResponse struct {
 // TodayWordsResult is the full response body for GET /api/words/today.
 type TodayWordsResult struct {
 	DailyGoal int            `json:"dailyGoal"`
+	NoCycle   bool           `json:"noCycle,omitempty"`
 	Completed bool           `json:"completed"`
 	Words     []WordResponse `json:"words"`
 }
@@ -60,51 +61,13 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&cycle).Error
 	if err != nil {
-		// No active cycle — try to create one.
-		var totalCount int64
-		db.DB.Model(&model.Word{}).Where("wordbook = ?", wordbook).Count(&totalCount)
-
-		if int64(progress.CompletedCount) >= totalCount {
-			return &TodayWordsResult{
-				DailyGoal: DailyBatchSize,
-				Completed: true,
-				Words:     []WordResponse{},
-			}, nil
-		}
-
-		cycle = model.Cycle{
-			UserID:   userID,
-			Wordbook: wordbook,
-			Status:   "ongoing",
-		}
-		if err2 := db.DB.Create(&cycle).Error; err2 != nil {
-			return nil, err2
-		}
-
-		// Populate WordCycle with the next CycleSize words.
-		var words []model.Word
-		if err2 := db.DB.
-			Where("wordbook = ?", wordbook).
-			Order("source_order ASC").
-			Limit(CycleSize).
-			Offset(progress.CompletedCount).
-			Find(&words).Error; err2 != nil {
-			return nil, err2
-		}
-
-		if len(words) > 0 {
-			wordCycles := make([]model.WordCycle, len(words))
-			for i, w := range words {
-				wordCycles[i] = model.WordCycle{
-					WordID:  w.ID,
-					CycleID: cycle.ID,
-					Status:  "new",
-				}
-			}
-			if err2 := db.DB.Create(&wordCycles).Error; err2 != nil {
-				return nil, err2
-			}
-		}
+		// No active cycle — ask the user to set one up.
+		return &TodayWordsResult{
+			DailyGoal: DailyBatchSize,
+			NoCycle:   true,
+			Completed: false,
+			Words:     []WordResponse{},
+		}, nil
 	}
 
 	// 3. Advance the daily batch pointer on a new calendar day.

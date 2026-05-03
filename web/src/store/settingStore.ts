@@ -21,5 +21,4 @@ export const useSettingStore = defineStore('setting', {
       this.dailyGoal = Math.max(this.batchSize, Math.floor(n))
     },
   },
-  persist: false,
 })

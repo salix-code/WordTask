@@ -5,6 +5,7 @@ import (
 	"log"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 
 	"wordtask-server/internal/service"
 )
@@ -109,4 +110,35 @@ func SetupCycle(c *gin.Context) {
 	}
 
 	OK(c, result)
+}
+
+// LoginRequest is the request body for POST /api/account/login.
+type LoginRequest struct {
+	AccountName string `json:"accountName" binding:"required"`
+}
+
+// Login handles POST /api/account/login.
+func Login(c *gin.Context) {
+	var req LoginRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "invalid request body")
+		return
+	}
+
+	accountService := service.AccountService{}
+	account, err := accountService.FindByName(req.AccountName)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			Fail(c, 404, "account not found")
+			return
+		}
+		log.Printf("[Login] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	OK(c, gin.H{
+		"userId":      account.ID,
+		"accountName": account.Name,
+	})
 }

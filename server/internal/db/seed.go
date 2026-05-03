@@ -76,3 +76,25 @@ func seedWordbook(wordbook, path string) error {
 	// Insert in batches to avoid hitting SQLite variable limits.
 	return DB.CreateInBatches(words, 200).Error
 }
+
+// SeedAccounts pre-populates the accounts table with some default accounts.
+func SeedAccounts() error {
+	accounts := []model.Account{
+		{Name: "tester"},
+		{Name: "admin"},
+	}
+
+	for _, acc := range accounts {
+		// Check if account already exists
+		var existing model.Account
+		if err := DB.Where("name = ?", acc.Name).First(&existing).Error; err == nil {
+			// Account exists, skip
+			continue
+		}
+
+		if err := DB.Create(&acc).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}

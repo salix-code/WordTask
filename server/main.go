@@ -26,6 +26,11 @@ func main() {
 		log.Fatalf("failed to seed words: %v", err)
 	}
 
+	// Seed accounts data.
+	if err := db.SeedAccounts(); err != nil {
+		log.Fatalf("failed to seed accounts: %v", err)
+	}
+
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
@@ -47,6 +52,11 @@ func main() {
 		progress := apiGroup.Group("/progress")
 		{
 			progress.POST("/advance", api.AdvanceProgress)
+		}
+
+		account := apiGroup.Group("/account")
+		{
+			account.POST("/login", api.Login)
 		}
 		cycles := apiGroup.Group("/cycles")
 		{

@@ -11,6 +11,8 @@ interface ReviewState {
   dailyIndex: number
   /** 该词库是否已全部学完 */
   wordbookCompleted: boolean
+  /** 当前用户没有正在进行的周期 */
+  noCycle: boolean
   /** 今日总量（= dailyQueue.length） */
   dailyTotal: number
   /** 今日已完成数量 */
@@ -32,6 +34,7 @@ export const useReviewStore = defineStore('review', {
     dailyQueue: [],
     dailyIndex: 0,
     wordbookCompleted: false,
+    noCycle: false,
     dailyTotal: 0,
     dailyCompleted: 0,
     sessionQueue: [],
@@ -74,6 +77,7 @@ export const useReviewStore = defineStore('review', {
       this.dailyQueue = []
       this.dailyIndex = 0
       this.wordbookCompleted = false
+      this.noCycle = false
       this.dailyTotal = 0
       this.dailyCompleted = 0
       this.sessionQueue = []
@@ -87,7 +91,17 @@ export const useReviewStore = defineStore('review', {
     async initDaily() {
       const setting = useSettingStore()
       const response = await fetchTodayWords(setting.wordbook)
+      if (response.noCycle) {
+        this.noCycle = true
+        this.wordbookCompleted = false
+        this.dailyQueue = []
+        this.dailyIndex = 0
+        this.dailyTotal = 0
+        this.dailyCompleted = 0
+        return
+      }
       if (response.completed) {
+        this.noCycle = false
         this.wordbookCompleted = true
         this.dailyQueue = []
         this.dailyIndex = 0
@@ -95,6 +109,7 @@ export const useReviewStore = defineStore('review', {
         this.dailyCompleted = 0
         return
       }
+      this.noCycle = false
       this.wordbookCompleted = false
       this.dailyQueue = response.words
       this.dailyIndex = 0
