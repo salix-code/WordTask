@@ -30,10 +30,12 @@ data/ecdict/
 # enrichment 中间产物
 data/wordbooks/ket-a2-key.unmatched.json
 .DS_Store
+readme.md
 
 # Frontend dependencies
 node_modules/
 web/node_modules/
+web/dist/
 
 # SQLite database files
 *.db
