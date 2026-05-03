@@ -61,6 +61,8 @@ func main() {
 		cycles := apiGroup.Group("/cycles")
 		{
 			cycles.POST("/setup", api.SetupCycle)
+			cycles.GET("/current", api.GetCurrentCycle)
+			cycles.PUT("/current", api.UpdateCycle)
 		}
 	}
 

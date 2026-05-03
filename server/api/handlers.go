@@ -112,6 +112,62 @@ func SetupCycle(c *gin.Context) {
 	OK(c, result)
 }
 
+// GetCurrentCycle handles GET /api/cycles/current?userId=xxx&wordbook=KET
+func GetCurrentCycle(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		Fail(c, 400, "userId is required")
+		return
+	}
+	wordbook := c.Query("wordbook")
+	if wordbook == "" {
+		Fail(c, 400, "wordbook is required")
+		return
+	}
+
+	words, err := service.GetCurrentCycleWords(userID, wordbook)
+	if err != nil {
+		log.Printf("[GetCurrentCycle] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	if words == nil {
+		OK(c, gin.H{"hasCycle": false, "words": []interface{}{}})
+		return
+	}
+	OK(c, gin.H{"hasCycle": true, "words": words})
+}
+
+// UpdateCycleRequest is the request body for PUT /api/cycles/current.
+type UpdateCycleRequest struct {
+	UserID   string   `json:"userId"   binding:"required"`
+	Wordbook string   `json:"wordbook" binding:"required"`
+	Words    []string `json:"words"    binding:"required"`
+}
+
+// UpdateCycle handles PUT /api/cycles/current.
+func UpdateCycle(c *gin.Context) {
+	var req UpdateCycleRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "invalid params: "+err.Error())
+		return
+	}
+
+	result, err := service.UpdateCurrentCycle(req.UserID, req.Wordbook, req.Words)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidCycleInput) {
+			Fail(c, 400, err.Error())
+			return
+		}
+		log.Printf("[UpdateCycle] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	OK(c, result)
+}
+
 // LoginRequest is the request body for POST /api/account/login.
 type LoginRequest struct {
 	AccountName string `json:"accountName" binding:"required"`
