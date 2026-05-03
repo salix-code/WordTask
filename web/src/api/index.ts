@@ -2,7 +2,7 @@ import axios, { type AxiosInstance, AxiosError } from 'axios'
 import type { ApiResponse } from '@/types/api'
 
 export const http: AxiosInstance = axios.create({
-  baseURL: '/api',
+  baseURL: 'http://45.62.109.123:3335/api',
   timeout: 10_000,
   headers: { 'Content-Type': 'application/json' },
 })

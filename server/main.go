@@ -34,7 +34,7 @@ func main() {
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowOrigins:     []string{"http://localhost:5173", "http://127.0.0.1:5173", "http://45.62.109.123:3333"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		AllowCredentials: true,
@@ -64,7 +64,7 @@ func main() {
 		}
 	}
 
-	addr := ":8080"
+	addr := ":3335"
 	log.Printf("WordTask server running at http://localhost%s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("failed to run server: %v", err)
