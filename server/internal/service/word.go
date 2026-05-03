@@ -8,7 +8,8 @@ import (
 	"wordtask-server/internal/model"
 )
 
-// CycleSize is the number of words in one learning cycle.
+// CycleSize is the default/reference number of words in one learning cycle.
+// Actual cycle size is flexible and determined by the submitted word list.
 const CycleSize = 30
 
 // DailyBatchSize is the maximum number of new words shown per calendar day within a cycle.

@@ -5,8 +5,6 @@ import { setupCycle } from '@/api/cycle'
 import { useReviewStore } from '@/store/reviewStore'
 import type { WordStatus } from '@/types/cycle'
 
-const CYCLE_SIZE = 30
-
 const router = useRouter()
 const review = useReviewStore()
 
@@ -20,7 +18,7 @@ const errorMsg = ref('')
 // 当前 wordbook 固定为 KET（与现有 word.ts 保持一致，后续可扩展为 props/store）
 const wordbook = 'KET'
 
-const canSubmit = computed(() => tags.value.length === CYCLE_SIZE && !submitting.value)
+const canSubmit = computed(() => tags.value.length >= 1 && !submitting.value)
 
 // 根据已有 results 获取某个 tag 的状态
 function tagStatus(term: string): WordStatus['status'] | null {
@@ -40,7 +38,6 @@ function tagClass(term: string): string {
 function addTag() {
   const word = inputVal.value.trim()
   if (!word) return
-  if (tags.value.length >= CYCLE_SIZE) return
   // 避免重复
   if (tags.value.some((t) => t.toLowerCase() === word.toLowerCase())) {
     inputVal.value = ''
@@ -115,7 +112,7 @@ function goHome() {
 
       <!-- 说明 -->
       <p class="text-base-content/60 text-sm">
-        输入单词后按 <kbd class="kbd kbd-sm">Enter</kbd> 或 <kbd class="kbd kbd-sm">Space</kbd> 生成标签，共需 {{ CYCLE_SIZE }} 个。
+        输入单词后按 <kbd class="kbd kbd-sm">Enter</kbd> 或 <kbd class="kbd kbd-sm">Space</kbd> 生成标签，至少输入 1 个即可提交。
       </p>
 
       <!-- 标签区 + 输入框 -->
@@ -136,7 +133,6 @@ function goHome() {
         </span>
 
         <input
-          v-if="tags.length < CYCLE_SIZE"
           ref="inputRef"
           v-model="inputVal"
           type="text"
@@ -148,8 +144,8 @@ function goHome() {
 
       <!-- 进度 -->
       <div class="flex justify-between text-sm text-base-content/50">
-        <span>已录入 {{ tags.length }} / {{ CYCLE_SIZE }} 个</span>
-        <span v-if="tags.length === CYCLE_SIZE" class="text-success font-medium">已集满，可提交</span>
+        <span>已录入 {{ tags.length }} 个</span>
+        <span v-if="tags.length >= 1" class="text-success font-medium">可提交</span>
       </div>
 
       <!-- 错误/成功提示 -->

@@ -32,7 +32,7 @@ type SetupCycleResult struct {
 // pass validation, creates a new cycle with those words for the given user.
 //
 // Validation rules:
-//  1. len(words) must equal CycleSize (30).
+//  1. len(words) must be >= 1.
 //  2. The user must NOT already have an ongoing cycle for this wordbook.
 //  3. Each word must exist in the words table (case-insensitive match on term).
 //  4. Each word must not have been used in ANY existing cycle
@@ -41,8 +41,8 @@ type SetupCycleResult struct {
 // Returns ErrInvalidCycleInput for user-facing validation errors that should
 // surface as HTTP 400.
 func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycleResult, error) {
-	if len(terms) != CycleSize {
-		return nil, fmt.Errorf("%w: expected %d words, got %d", ErrInvalidCycleInput, CycleSize, len(terms))
+	if len(terms) < 1 {
+		return nil, fmt.Errorf("%w: at least 1 word is required", ErrInvalidCycleInput)
 	}
 
 	// Reject duplicate terms within the submitted list (case-insensitive).

@@ -16,7 +16,7 @@ export function fetchTodayWords(wordbook: string): Promise<TodayWordsResponse> {
   return http
     .get('/words/today', {
       params: {
-        userId: userStore.userId,
+        userId: userStore.userId !== null ? String(userStore.userId) : null,
         wordbook,
       },
     })
@@ -28,7 +28,7 @@ export function submitReview(wordId: string, quality: ReviewQuality, wordbook: s
   const userStore = useUserStore()
   return http
     .post('/words/review', {
-      userId: userStore.userId,
+      userId: userStore.userId !== null ? String(userStore.userId) : null,
       wordbook,
       wordId: Number(wordId),
       quality,

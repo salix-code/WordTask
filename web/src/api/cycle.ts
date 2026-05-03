@@ -3,7 +3,7 @@ import type { SetupCycleResult } from '@/types/cycle'
 import { useUserStore } from '@/store/userStore'
 
 export interface SetupCyclePayload {
-  userId: number | null
+  userId: string | null
   wordbook: string
   words: string[]
 }
@@ -18,7 +18,7 @@ export function setupCycle(payload: Omit<SetupCyclePayload, 'userId'>): Promise<
   const userStore = useUserStore()
   const fullPayload: SetupCyclePayload = {
     ...payload,
-    userId: userStore.userId,
+    userId: userStore.userId !== null ? String(userStore.userId) : null,
   }
   return http
     .post<SetupCycleResult>('/cycles/setup', fullPayload)
