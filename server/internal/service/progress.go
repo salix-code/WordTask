@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,19 +41,41 @@ func MarkWordKnown(userID, wordbook string, wordID uint) error {
 	}
 
 	if newCount == 0 {
-		// Count actual words in this cycle to advance CompletedCount correctly.
-		var cycleWordCount int64
-		db.DB.Model(&model.WordCycle{}).Where("cycle_id = ?", cycle.ID).Count(&cycleWordCount)
+		if err := db.DB.Transaction(func(tx *gorm.DB) error {
+			// Count actual words in this cycle to advance CompletedCount correctly.
+			var cycleWordCount int64
+			if err := tx.Model(&model.WordCycle{}).Where("cycle_id = ?", cycle.ID).Count(&cycleWordCount).Error; err != nil {
+				return err
+			}
 
-		// Mark cycle as completed.
-		if err := db.DB.Model(&cycle).Update("status", "completed").Error; err != nil {
-			return err
-		}
+			// Mark cycle as completed.
+			if err := tx.Model(&cycle).Update("status", "completed").Error; err != nil {
+				return err
+			}
 
-		// Advance UserProgress.CompletedCount.
-		if err := db.DB.Model(&model.UserProgress{}).
-			Where("user_id = ? AND wordbook = ?", userID, wordbook).
-			UpdateColumn("completed_count", gorm.Expr("completed_count + ?", cycleWordCount)).Error; err != nil {
+			// Advance UserProgress.CompletedCount.
+			if err := tx.Model(&model.UserProgress{}).
+				Where("user_id = ? AND wordbook = ?", userID, wordbook).
+				UpdateColumn("completed_count", gorm.Expr("completed_count + ?", cycleWordCount)).Error; err != nil {
+				return err
+			}
+
+			// Auto-activate the next queued cycle (oldest first).
+			var nextCycle model.Cycle
+			nextErr := tx.
+				Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "queued").
+				Order("created_at ASC, id ASC").
+				First(&nextCycle).Error
+			if nextErr != nil && !errors.Is(nextErr, gorm.ErrRecordNotFound) {
+				return nextErr
+			}
+			if nextErr == nil {
+				if err := tx.Model(&nextCycle).Update("status", "ongoing").Error; err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
 			return err
 		}
 	}

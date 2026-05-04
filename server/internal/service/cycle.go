@@ -34,10 +34,10 @@ type SetupCycleResult struct {
 //
 // Validation rules:
 //  1. len(words) must be >= 1.
-//  2. The user must NOT already have an ongoing cycle for this wordbook.
+//  2. At most one cycle can be ongoing; if one already exists, new cycle is queued.
 //  3. Each word must exist in the words table (case-insensitive match on term).
 //  4. Each word must not have been used in ANY existing cycle
-//     (ongoing or completed) for this user + wordbook.
+//     (ongoing or queued or completed) for this user + wordbook.
 //
 // Returns ErrInvalidCycleInput for user-facing validation errors that should
 // surface as HTTP 400.
@@ -56,15 +56,13 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 		seen[k] = struct{}{}
 	}
 
-	// Reject if user already has an ongoing cycle for this wordbook.
+	// Check whether there is already an ongoing cycle.
 	var existingOngoing model.Cycle
 	err := db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&existingOngoing).Error
-	if err == nil {
-		return nil, fmt.Errorf("%w: user already has an ongoing cycle for wordbook %s", ErrInvalidCycleInput, wordbook)
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
+	hasOngoing := err == nil
+	if !hasOngoing && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, fmt.Errorf("query ongoing cycle: %w", err)
 	}
 
@@ -88,7 +86,7 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 		wordMap[strings.ToLower(w.Term)] = w
 	}
 
-	// 2. Collect all word IDs used in ANY cycle (ongoing or completed) of this user + wordbook.
+	// 2. Collect all word IDs used in ANY cycle (ongoing or queued or completed) of this user + wordbook.
 	usedWordIDs := make(map[uint]struct{})
 	var usedIDs []uint
 	if err := db.DB.
@@ -129,11 +127,16 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 	}
 
 	// 4. All words are valid — create the new cycle and word_cycle rows in a transaction.
+	// If there is already an ongoing cycle, this new one is queued.
 	if err := db.DB.Transaction(func(tx *gorm.DB) error {
+		status := "ongoing"
+		if hasOngoing {
+			status = "queued"
+		}
 		newCycle := model.Cycle{
 			UserID:   userID,
 			Wordbook: wordbook,
-			Status:   "ongoing",
+			Status:   status,
 		}
 		if err := tx.Create(&newCycle).Error; err != nil {
 			return fmt.Errorf("create cycle: %w", err)
@@ -240,7 +243,7 @@ func ListCycles(userID, wordbook string) ([]CycleSummary, error) {
 		Joins("LEFT JOIN word_cycles ON word_cycles.cycle_id = cycles.id").
 		Where("cycles.user_id = ? AND cycles.wordbook = ?", userID, wordbook).
 		Group("cycles.id, cycles.status, cycles.created_at").
-		Order("CASE WHEN cycles.status = 'ongoing' THEN 0 ELSE 1 END, cycles.created_at DESC").
+		Order("CASE cycles.status WHEN 'ongoing' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, cycles.created_at DESC").
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("list cycles: %w", err)
 	}

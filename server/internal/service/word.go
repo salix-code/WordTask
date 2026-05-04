@@ -2,7 +2,10 @@ package service
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
+
+	"gorm.io/gorm"
 
 	"wordtask-server/internal/db"
 	"wordtask-server/internal/model"
@@ -45,7 +48,8 @@ type TodayWordsResult struct {
 }
 
 // GetTodayWords returns up to DailyBatchSize words for the user's active cycle.
-// A new cycle is created automatically when none is ongoing.
+// If no ongoing cycle exists but queued cycles exist, the oldest queued cycle
+// is promoted to ongoing automatically.
 // The daily batch advances once per calendar day (midnight boundary).
 func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 	// 1. Load or create UserProgress.
@@ -56,19 +60,37 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 		return nil, err
 	}
 
-	// 2. Find or create the active (ongoing) cycle.
+	// 2. Find the active (ongoing) cycle.
 	var cycle model.Cycle
 	err := db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&cycle).Error
-	if err != nil {
-		// No active cycle — ask the user to set one up.
-		return &TodayWordsResult{
-			DailyGoal: DailyBatchSize,
-			NoCycle:   true,
-			Completed: false,
-			Words:     []WordResponse{},
-		}, nil
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		// No active cycle — try promote oldest queued cycle.
+		var next model.Cycle
+		nextErr := db.DB.
+			Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "queued").
+			Order("created_at ASC, id ASC").
+			First(&next).Error
+		if nextErr != nil && !errors.Is(nextErr, gorm.ErrRecordNotFound) {
+			return nil, nextErr
+		}
+		if errors.Is(nextErr, gorm.ErrRecordNotFound) {
+			// No active and no queued cycle — ask user to set one up.
+			return &TodayWordsResult{
+				DailyGoal: DailyBatchSize,
+				NoCycle:   true,
+				Completed: false,
+				Words:     []WordResponse{},
+			}, nil
+		}
+		if err := db.DB.Model(&next).Update("status", "ongoing").Error; err != nil {
+			return nil, err
+		}
+		cycle = next
 	}
 
 	// 3. Advance the daily batch pointer on a new calendar day.
