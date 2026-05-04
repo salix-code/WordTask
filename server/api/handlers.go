@@ -192,6 +192,62 @@ func GetCurrentCycle(c *gin.Context) {
 	OK(c, gin.H{"hasCycle": true, "words": words})
 }
 
+// ListCycles handles GET /api/cycles?userId=xxx&wordbook=KET
+func ListCycles(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		Fail(c, 400, "userId is required")
+		return
+	}
+	wordbook := c.Query("wordbook")
+	if wordbook == "" {
+		Fail(c, 400, "wordbook is required")
+		return
+	}
+
+	cycles, err := service.ListCycles(userID, wordbook)
+	if err != nil {
+		log.Printf("[ListCycles] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	OK(c, gin.H{"cycles": cycles})
+}
+
+// GetCycleDetail handles GET /api/cycles/:id?userId=xxx&wordbook=KET
+func GetCycleDetail(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		Fail(c, 400, "userId is required")
+		return
+	}
+	wordbook := c.Query("wordbook")
+	if wordbook == "" {
+		Fail(c, 400, "wordbook is required")
+		return
+	}
+
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		Fail(c, 400, "invalid cycle id")
+		return
+	}
+
+	detail, err := service.GetCycleWordsByID(userID, wordbook, uint(id))
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidCycleInput) {
+			Fail(c, 400, err.Error())
+			return
+		}
+		log.Printf("[GetCycleDetail] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
+
+	OK(c, detail)
+}
+
 // UpdateCycleRequest is the request body for PUT /api/cycles/current.
 type UpdateCycleRequest struct {
 	UserID   string   `json:"userId"   binding:"required"`

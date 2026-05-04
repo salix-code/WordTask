@@ -62,9 +62,11 @@ func main() {
 		}
 		cycles := apiGroup.Group("/cycles")
 		{
+			cycles.GET("", api.ListCycles)
 			cycles.POST("/setup", api.SetupCycle)
 			cycles.GET("/current", api.GetCurrentCycle)
 			cycles.PUT("/current", api.UpdateCycle)
+			cycles.GET("/:id", api.GetCycleDetail)
 			cycles.DELETE("/all", api.ClearAllCycles)
 		}
 	}

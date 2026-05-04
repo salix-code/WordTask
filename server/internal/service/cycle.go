@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -200,6 +201,101 @@ func ClearAllCycles(userID, wordbook string) error {
 type CurrentCycleWord struct {
 	Term   string `json:"term"`
 	Status string `json:"status"` // new | known
+}
+
+// CycleSummary is a lightweight item for cycle list page.
+type CycleSummary struct {
+	CycleID    uint      `json:"cycleId"`
+	Status     string    `json:"status"` // ongoing | completed
+	CreatedAt  time.Time `json:"createdAt"`
+	TotalWords int64     `json:"totalWords"`
+	KnownWords int64     `json:"knownWords"`
+}
+
+// CycleDetail includes cycle metadata and all words under this cycle.
+type CycleDetail struct {
+	CycleID   uint               `json:"cycleId"`
+	Status    string             `json:"status"` // ongoing | completed
+	CreatedAt time.Time          `json:"createdAt"`
+	Words     []CurrentCycleWord `json:"words"`
+}
+
+// ListCycles returns all cycles of the given user+wordbook for management UI.
+func ListCycles(userID, wordbook string) ([]CycleSummary, error) {
+	type row struct {
+		CycleID    uint
+		Status     string
+		CreatedAt  time.Time
+		TotalWords int64
+		KnownWords int64
+	}
+	var rows []row
+	if err := db.DB.
+		Table("cycles").
+		Select(
+			"cycles.id AS cycle_id, cycles.status, cycles.created_at, "+
+				"COUNT(word_cycles.word_id) AS total_words, "+
+				"COALESCE(SUM(CASE WHEN word_cycles.status = 'known' THEN 1 ELSE 0 END), 0) AS known_words",
+		).
+		Joins("LEFT JOIN word_cycles ON word_cycles.cycle_id = cycles.id").
+		Where("cycles.user_id = ? AND cycles.wordbook = ?", userID, wordbook).
+		Group("cycles.id, cycles.status, cycles.created_at").
+		Order("CASE WHEN cycles.status = 'ongoing' THEN 0 ELSE 1 END, cycles.created_at DESC").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("list cycles: %w", err)
+	}
+
+	result := make([]CycleSummary, len(rows))
+	for i, r := range rows {
+		result[i] = CycleSummary{
+			CycleID:    r.CycleID,
+			Status:     r.Status,
+			CreatedAt:  r.CreatedAt,
+			TotalWords: r.TotalWords,
+			KnownWords: r.KnownWords,
+		}
+	}
+	return result, nil
+}
+
+// GetCycleWordsByID returns all words for a specific cycle owned by user+wordbook.
+func GetCycleWordsByID(userID, wordbook string, cycleID uint) (*CycleDetail, error) {
+	var cycle model.Cycle
+	if err := db.DB.
+		Where("id = ? AND user_id = ? AND wordbook = ?", cycleID, userID, wordbook).
+		First(&cycle).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%w: cycle not found", ErrInvalidCycleInput)
+		}
+		return nil, fmt.Errorf("query cycle: %w", err)
+	}
+
+	type row struct {
+		Term   string
+		Status string
+	}
+	var rows []row
+	if err := db.DB.
+		Table("word_cycles").
+		Select("words.term, word_cycles.status").
+		Joins("JOIN words ON words.id = word_cycles.word_id").
+		Where("word_cycles.cycle_id = ?", cycle.ID).
+		Order("words.source_order ASC").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("query cycle words: %w", err)
+	}
+
+	words := make([]CurrentCycleWord, len(rows))
+	for i, r := range rows {
+		words[i] = CurrentCycleWord{Term: r.Term, Status: r.Status}
+	}
+
+	return &CycleDetail{
+		CycleID:   cycle.ID,
+		Status:    cycle.Status,
+		CreatedAt: cycle.CreatedAt,
+		Words:     words,
+	}, nil
 }
 
 // GetCurrentCycleWords returns all words in the user's ongoing cycle.
