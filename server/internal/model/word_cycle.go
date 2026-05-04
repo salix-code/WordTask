@@ -7,6 +7,7 @@ import "time"
 type WordCycle struct {
 	WordID     uint   `gorm:"primaryKey;uniqueIndex:idx_word_cycle"`
 	CycleID    uint   `gorm:"primaryKey;uniqueIndex:idx_word_cycle"`
+	SortOrder  int    `gorm:"not null;default:0"`   // input order within this cycle
 	Status     string `gorm:"default:new;not null"` // new | known
 	ReviewedAt *time.Time
 }

@@ -120,7 +120,7 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 		Select("word_cycles.*, words.*").
 		Joins("JOIN words ON words.id = word_cycles.word_id").
 		Where("word_cycles.cycle_id = ? AND word_cycles.status = ?", cycle.ID, "new").
-		Order("words.source_order ASC").
+		Order("word_cycles.sort_order ASC, words.source_order ASC").
 		Limit(DailyBatchSize).
 		Scan(&rows).Error; err2 != nil {
 		return nil, err2

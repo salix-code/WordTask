@@ -145,9 +145,10 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 		wordCycles := make([]model.WordCycle, len(validWords))
 		for i, w := range validWords {
 			wordCycles[i] = model.WordCycle{
-				WordID:  w.ID,
-				CycleID: newCycle.ID,
-				Status:  "new",
+				WordID:    w.ID,
+				CycleID:   newCycle.ID,
+				SortOrder: i + 1,
+				Status:    "new",
 			}
 		}
 		if err := tx.Create(&wordCycles).Error; err != nil {
@@ -283,7 +284,7 @@ func GetCycleWordsByID(userID, wordbook string, cycleID uint) (*CycleDetail, err
 		Select("words.term, word_cycles.status").
 		Joins("JOIN words ON words.id = word_cycles.word_id").
 		Where("word_cycles.cycle_id = ?", cycle.ID).
-		Order("words.source_order ASC").
+		Order("word_cycles.sort_order ASC, words.source_order ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("query cycle words: %w", err)
 	}
@@ -325,6 +326,7 @@ func GetCurrentCycleWords(userID, wordbook string) ([]CurrentCycleWord, error) {
 		Select("words.term, word_cycles.status").
 		Joins("JOIN words ON words.id = word_cycles.word_id").
 		Where("word_cycles.cycle_id = ?", cycle.ID).
+		Order("word_cycles.sort_order ASC, words.source_order ASC").
 		Scan(&rows).Error; err != nil {
 		return nil, fmt.Errorf("query cycle words: %w", err)
 	}
@@ -473,18 +475,28 @@ func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrent
 
 		// Add words that are new to this cycle.
 		toAdd := make([]model.WordCycle, 0)
-		for _, w := range validWords {
+		for i, w := range validWords {
 			if _, exists := existingMap[w.ID]; !exists {
 				toAdd = append(toAdd, model.WordCycle{
-					WordID:  w.ID,
-					CycleID: cycle.ID,
-					Status:  "new",
+					WordID:    w.ID,
+					CycleID:   cycle.ID,
+					SortOrder: i + 1,
+					Status:    "new",
 				})
 			}
 		}
 		if len(toAdd) > 0 {
 			if err := tx.Create(&toAdd).Error; err != nil {
 				return fmt.Errorf("insert new word_cycles: %w", err)
+			}
+		}
+
+		// Reorder all remaining words by the submitted order.
+		for i, w := range validWords {
+			if err := tx.Model(&model.WordCycle{}).
+				Where("cycle_id = ? AND word_id = ?", cycle.ID, w.ID).
+				Update("sort_order", i+1).Error; err != nil {
+				return fmt.Errorf("reorder word_cycles: %w", err)
 			}
 		}
 		return nil
