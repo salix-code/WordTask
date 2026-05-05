@@ -401,6 +401,49 @@ func Login(c *gin.Context) {
 	})
 }
 
+// CreateAccountRequest is the request body for POST /api/account/create.
+type CreateAccountRequest struct {
+	AccountName string `json:"accountName" binding:"required"`
+}
+
+// CreateAccount handles POST /api/account/create?userId=xxx.
+func CreateAccount(c *gin.Context) {
+	userID := c.Query("userId")
+	if userID == "" {
+		Fail(c, 400, "userId is required")
+		return
+	}
+	if !requireAdminUser(c, userID) {
+		return
+	}
+
+	var req CreateAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		Fail(c, 400, "invalid request body")
+		return
+	}
+
+	accountService := service.AccountService{}
+	account, err := accountService.Create(req.AccountName)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrAccountNameRequired):
+			Fail(c, 400, "accountName is required")
+		case errors.Is(err, service.ErrAccountAlreadyExists):
+			Fail(c, 409, "account already exists")
+		default:
+			log.Printf("[CreateAccount] error: %v", err)
+			Fail(c, 500, "internal server error")
+		}
+		return
+	}
+
+	OK(c, gin.H{
+		"userId":      account.ID,
+		"accountName": account.Name,
+	})
+}
+
 func requireAdminUser(c *gin.Context, userID string) bool {
 	parsedUserID, err := strconv.ParseUint(userID, 10, 64)
 	if err != nil || parsedUserID == 0 {

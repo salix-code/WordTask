@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"gorm.io/gorm"
 	"wordtask-server/internal/db"
@@ -13,6 +14,11 @@ import (
 type AccountService struct{}
 
 const adminAccountIDConfigKey = "admin_account_id"
+
+var (
+	ErrAccountNameRequired  = errors.New("account name is required")
+	ErrAccountAlreadyExists = errors.New("account already exists")
+)
 
 // FindByName finds an account by its name.
 // It returns the account if found, otherwise returns an error.
@@ -53,4 +59,27 @@ func (s *AccountService) IsAdmin(userID uint) (bool, error) {
 		return false, err
 	}
 	return admin.ID == userID, nil
+}
+
+// Create creates a new account with a unique name.
+func (s *AccountService) Create(name string) (*model.Account, error) {
+	trimmedName := strings.TrimSpace(name)
+	if trimmedName == "" {
+		return nil, ErrAccountNameRequired
+	}
+
+	var existing model.Account
+	err := db.DB.Where("name = ?", trimmedName).First(&existing).Error
+	if err == nil {
+		return nil, ErrAccountAlreadyExists
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+
+	account := &model.Account{Name: trimmedName}
+	if err := db.DB.Create(account).Error; err != nil {
+		return nil, err
+	}
+	return account, nil
 }

@@ -67,6 +67,7 @@ func main() {
 		account := apiGroup.Group("/account")
 		{
 			account.POST("/login", api.Login)
+			account.POST("/create", api.CreateAccount)
 		}
 		cycles := apiGroup.Group("/cycles")
 		{
