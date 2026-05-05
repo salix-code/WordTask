@@ -6,6 +6,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"wordtask-server/internal/service"
@@ -23,9 +24,10 @@ func ListWordbooks(c *gin.Context) {
 	items := make([]gin.H, 0, len(enabled))
 	for _, wb := range enabled {
 		items = append(items, gin.H{
-			"code":      wb.Code,
-			"shortName": wb.ShortName,
-			"fullName":  wb.FullName,
+			"code":        wb.Code,
+			"shortName":   wb.ShortName,
+			"fullName":    wb.FullName,
+			"cardProfile": wb.CardProfile,
 		})
 	}
 	OK(c, gin.H{"wordbooks": items})
@@ -387,7 +389,7 @@ func Login(c *gin.Context) {
 		Fail(c, 500, "internal server error")
 		return
 	}
-	isAdmin, err := accountService.IsAdmin(account.ID)
+	isAdmin, err := accountService.IsAdmin(account.UserID)
 	if err != nil {
 		log.Printf("[Login] isAdmin error: %v", err)
 		Fail(c, 500, "internal server error")
@@ -395,7 +397,7 @@ func Login(c *gin.Context) {
 	}
 
 	OK(c, gin.H{
-		"userId":      account.ID,
+		"userId":      account.UserID,
 		"accountName": account.Name,
 		"isAdmin":     isAdmin,
 	})
@@ -439,20 +441,19 @@ func CreateAccount(c *gin.Context) {
 	}
 
 	OK(c, gin.H{
-		"userId":      account.ID,
+		"userId":      account.UserID,
 		"accountName": account.Name,
 	})
 }
 
 func requireAdminUser(c *gin.Context, userID string) bool {
-	parsedUserID, err := strconv.ParseUint(userID, 10, 64)
-	if err != nil || parsedUserID == 0 {
+	if _, err := uuid.Parse(userID); err != nil {
 		Fail(c, 400, "invalid userId")
 		return false
 	}
 
 	accountService := service.AccountService{}
-	isAdmin, err := accountService.IsAdmin(uint(parsedUserID))
+	isAdmin, err := accountService.IsAdmin(userID)
 	if err != nil {
 		log.Printf("[requireAdminUser] error: %v", err)
 		Fail(c, 500, "internal server error")

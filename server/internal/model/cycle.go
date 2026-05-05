@@ -10,6 +10,7 @@ type Cycle struct {
 	ID        uint   `gorm:"primaryKey;autoIncrement"`
 	UserID    string `gorm:"index;not null"`
 	Wordbook  string `gorm:"not null"`
+	CycleNo   int    `gorm:"column:cycle_no;index;not null;default:0"`
 	Status    string `gorm:"default:ongoing;not null"` // ongoing | queued | completed
 	CreatedAt time.Time
 }

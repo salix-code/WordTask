@@ -28,15 +28,21 @@ func Init(dsn string) error {
 	if err := db.AutoMigrate(
 		&model.Account{},
 		&model.SystemConfig{},
-		&model.Word{},
+		&model.WordInfo{},
 		&model.UserProgress{},
 		&model.Cycle{},
-		&model.WordCycle{},
 		&model.ReviewProgress{},
 	); err != nil {
 		return err
 	}
 
 	DB = db
+	if err := EnsureWordSchema(); err != nil {
+		return err
+	}
+	if err := EnsureAccountUserIDs(); err != nil {
+		return err
+	}
+
 	return nil
 }

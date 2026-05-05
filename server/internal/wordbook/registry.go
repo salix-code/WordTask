@@ -16,12 +16,13 @@ var (
 
 // Definition describes one wordbook entry from config.
 type Definition struct {
-	Code      string `json:"code"`
-	ShortName string `json:"shortName"`
-	FullName  string `json:"fullName"`
-	JSONPath  string `json:"jsonPath"`
-	Importer  string `json:"importer"`
-	Enabled   bool   `json:"enabled"`
+	Code        string `json:"code"`
+	ShortName   string `json:"shortName"`
+	FullName    string `json:"fullName"`
+	CardProfile string `json:"cardProfile,omitempty"`
+	JSONPath    string `json:"jsonPath"`
+	Importer    string `json:"importer"`
+	Enabled     bool   `json:"enabled"`
 }
 
 type listPayload struct {

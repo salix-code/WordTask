@@ -2,18 +2,15 @@ package service
 
 import (
 	"errors"
-	"fmt"
-	"strconv"
 	"strings"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"wordtask-server/internal/db"
 	"wordtask-server/internal/model"
 )
 
 type AccountService struct{}
-
-const adminAccountIDConfigKey = "admin_account_id"
 
 var (
 	ErrAccountNameRequired  = errors.New("account name is required")
@@ -32,25 +29,15 @@ func (s *AccountService) FindByName(name string) (*model.Account, error) {
 
 // GetAdmin returns the canonical administrator account.
 func (s *AccountService) GetAdmin() (*model.Account, error) {
-	var cfg model.SystemConfig
-	if err := db.DB.Where("key = ?", adminAccountIDConfigKey).First(&cfg).Error; err != nil {
-		return nil, err
-	}
-
-	adminID, err := strconv.ParseUint(cfg.Value, 10, 64)
-	if err != nil || adminID == 0 {
-		return nil, fmt.Errorf("invalid %s: %q", adminAccountIDConfigKey, cfg.Value)
-	}
-
 	var account model.Account
-	if err := db.DB.First(&account, adminID).Error; err != nil {
+	if err := db.DB.Where("user_id = ?", model.AdminUserID).First(&account).Error; err != nil {
 		return nil, err
 	}
 	return &account, nil
 }
 
 // IsAdmin checks whether a user ID is the canonical administrator.
-func (s *AccountService) IsAdmin(userID uint) (bool, error) {
+func (s *AccountService) IsAdmin(userID string) (bool, error) {
 	admin, err := s.GetAdmin()
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -58,7 +45,7 @@ func (s *AccountService) IsAdmin(userID uint) (bool, error) {
 		}
 		return false, err
 	}
-	return admin.ID == userID, nil
+	return admin.UserID == userID, nil
 }
 
 // Create creates a new account with a unique name.
@@ -77,7 +64,10 @@ func (s *AccountService) Create(name string) (*model.Account, error) {
 		return nil, err
 	}
 
-	account := &model.Account{Name: trimmedName}
+	account := &model.Account{
+		UserID: uuid.NewString(),
+		Name:   trimmedName,
+	}
 	if err := db.DB.Create(account).Error; err != nil {
 		return nil, err
 	}

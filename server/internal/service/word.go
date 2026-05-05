@@ -3,6 +3,7 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -55,6 +56,10 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
 		return nil, err
 	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
+		return nil, err
+	}
 
 	// 1. Load or create UserProgress.
 	var progress model.UserProgress
@@ -66,7 +71,7 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 
 	// 2. Find the active (ongoing) cycle.
 	var cycle model.Cycle
-	err := db.DB.
+	err = db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&cycle).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
@@ -102,8 +107,11 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 	lastDate := truncateToDay(progress.LastSessionDate)
 	if lastDate.Before(today) {
 		var knownCount int64
-		db.DB.Model(&model.WordCycle{}).
-			Where("cycle_id = ? AND status = ?", cycle.ID, "known").
+		db.DB.
+			Model(&model.ReviewProgress{}).
+			Distinct("review_progresses.word_id").
+			Joins(fmt.Sprintf("JOIN %s ON %s.id = review_progresses.word_id", wordTable, wordTable)).
+			Where(fmt.Sprintf("review_progresses.user_id = ? AND review_progresses.wordbook = ? AND %s.wordbook = ? AND %s.cycle = ?", wordTable, wordTable), userID, wordbook, wordbook, cycle.CycleNo).
 			Count(&knownCount)
 		progress.LastSessionCompleted = int(knownCount)
 		progress.LastSessionDate = time.Now()
@@ -113,26 +121,25 @@ func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
 		})
 	}
 
-	// 4. Return up to DailyBatchSize 'new' words from the current cycle.
-	type wordCycleJoin struct {
-		model.WordCycle
-		model.Word
-	}
-	var rows []wordCycleJoin
+	// 4. Return up to DailyBatchSize unlearned words from the current cycle.
+	var rows []model.Word
 	if err2 := db.DB.
-		Table("word_cycles").
-		Select("word_cycles.*, words.*").
-		Joins("JOIN words ON words.id = word_cycles.word_id").
-		Where("word_cycles.cycle_id = ? AND word_cycles.status = ?", cycle.ID, "new").
-		Order("word_cycles.sort_order ASC, words.source_order ASC").
+		Table(wordTable).
+		Where(fmt.Sprintf("%s.wordbook = ? AND %s.cycle = ?", wordTable, wordTable), wordbook, cycle.CycleNo).
+		Where(fmt.Sprintf("%s.id NOT IN (?)", wordTable),
+			db.DB.Model(&model.ReviewProgress{}).
+				Select("review_progresses.word_id").
+				Where("review_progresses.user_id = ? AND review_progresses.wordbook = ?", userID, wordbook),
+		).
+		Order(fmt.Sprintf("%s.source_order ASC", wordTable)).
 		Limit(DailyBatchSize).
 		Scan(&rows).Error; err2 != nil {
 		return nil, err2
 	}
 
 	responses := make([]WordResponse, 0, len(rows))
-	for _, r := range rows {
-		responses = append(responses, toWordResponse(r.Word))
+	for _, row := range rows {
+		responses = append(responses, toWordResponse(row))
 	}
 
 	return &TodayWordsResult{

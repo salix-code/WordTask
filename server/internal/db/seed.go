@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 	"wordtask-server/internal/model"
 	"wordtask-server/internal/wordbook"
@@ -36,8 +36,16 @@ var importers = map[string]wordImporter{
 // wordbookDir is the directory containing the wordbook JSON files.
 func SeedWords(wordbookDir string) error {
 	for _, wb := range wordbook.GetEnabled() {
+		tableName, err := EnsureWordTable(wb.Code)
+		if err != nil {
+			return fmt.Errorf("ensure word table for %s: %w", wb.Code, err)
+		}
+		if err := upsertWordInfo(wb.Code, tableName); err != nil {
+			return fmt.Errorf("upsert word info for %s: %w", wb.Code, err)
+		}
+
 		var count int64
-		if err := DB.Model(&model.Word{}).Where("wordbook = ?", wb.Code).Count(&count).Error; err != nil {
+		if err := DB.Table(tableName).Where("wordbook = ?", wb.Code).Count(&count).Error; err != nil {
 			return fmt.Errorf("count words for %s: %w", wb.Code, err)
 		}
 		if count > 0 {
@@ -53,14 +61,33 @@ func SeedWords(wordbookDir string) error {
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(wordbookDir, path)
 		}
-		if err := seedWordbook(wb.Code, path, importer); err != nil {
+		if err := seedWordbook(tableName, wb.Code, path, importer); err != nil {
 			return fmt.Errorf("seed %s: %w", wb.Code, err)
 		}
 	}
 	return nil
 }
 
-func seedWordbook(wordbookCode, path string, importer wordImporter) error {
+func upsertWordInfo(wordbookCode, tableName string) error {
+	var info model.WordInfo
+	err := DB.Where("wordbook = ?", wordbookCode).First(&info).Error
+	switch {
+	case err == nil:
+		if info.TableName == tableName {
+			return nil
+		}
+		return DB.Model(&info).Update("table_name", tableName).Error
+	case !errors.Is(err, gorm.ErrRecordNotFound):
+		return err
+	default:
+		return DB.Create(&model.WordInfo{
+			Wordbook:  wordbookCode,
+			TableName: tableName,
+		}).Error
+	}
+}
+
+func seedWordbook(tableName, wordbookCode, path string, importer wordImporter) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -72,7 +99,7 @@ func seedWordbook(wordbookCode, path string, importer wordImporter) error {
 	}
 
 	// Insert in batches to avoid hitting SQLite variable limits.
-	return DB.CreateInBatches(words, 200).Error
+	return DB.Table(tableName).CreateInBatches(words, 200).Error
 }
 
 func importKETEnrichedV1(wordbookCode string, data []byte) ([]model.Word, error) {
@@ -120,87 +147,93 @@ func SeedAccounts(adminAccountName string) error {
 const (
 	defaultTesterAccountName = "tester"
 	defaultAdminAccountName  = "admin"
-	adminAccountIDConfigKey  = "admin_account_id"
+	adminAccountIDConfigKey  = "admin_account_id" // legacy compatibility for numeric admin ID
 )
 
 func ensureAccountByName(name string) error {
 	var existing model.Account
 	err := DB.Where("name = ?", name).First(&existing).Error
 	if err == nil {
+		if existing.UserID == "" {
+			return DB.Model(&existing).Update("user_id", uuid.NewString()).Error
+		}
 		return nil
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
-	return DB.Create(&model.Account{Name: name}).Error
+	return DB.Create(&model.Account{
+		UserID: uuid.NewString(),
+		Name:   name,
+	}).Error
 }
 
 func ensureAdminAccount(adminAccountName string) error {
-	adminID, err := getAdminAccountID()
-	if err != nil {
+	var byGUID model.Account
+	if err := DB.Where("user_id = ?", model.AdminUserID).First(&byGUID).Error; err == nil {
+		if byGUID.Name != adminAccountName {
+			return DB.Model(&byGUID).Update("name", adminAccountName).Error
+		}
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
 	}
 
-	if adminID > 0 {
-		var existing model.Account
-		err := DB.First(&existing, adminID).Error
-		switch {
-		case err == nil:
-			if existing.Name != adminAccountName {
-				if err := DB.Model(&existing).Update("name", adminAccountName).Error; err != nil {
-					return err
-				}
-			}
-			return nil
-		case !errors.Is(err, gorm.ErrRecordNotFound):
-			return err
-		}
-	}
-
-	var adminAccount model.Account
-	err = DB.Where("name = ?", adminAccountName).First(&adminAccount).Error
+	legacyAdmin, err := getLegacyAdminByNumericID()
 	if err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
-		}
-		adminAccount = model.Account{Name: adminAccountName}
-		if err := DB.Create(&adminAccount).Error; err != nil {
-			return err
-		}
+		return err
+	}
+	if legacyAdmin != nil {
+		return DB.Model(legacyAdmin).Updates(map[string]interface{}{
+			"user_id": model.AdminUserID,
+			"name":    adminAccountName,
+		}).Error
 	}
 
-	return upsertSystemConfig(adminAccountIDConfigKey, strconv.FormatUint(uint64(adminAccount.ID), 10))
+	var byName model.Account
+	if err := DB.Where("name = ?", adminAccountName).First(&byName).Error; err == nil {
+		return DB.Model(&byName).Update("user_id", model.AdminUserID).Error
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	return DB.Create(&model.Account{
+		UserID: model.AdminUserID,
+		Name:   adminAccountName,
+	}).Error
 }
 
-func getAdminAccountID() (uint, error) {
+func getLegacyAdminByNumericID() (*model.Account, error) {
 	var cfg model.SystemConfig
 	if err := DB.Where("key = ?", adminAccountIDConfigKey).First(&cfg).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, nil
+			return nil, nil
 		}
-		return 0, err
+		return nil, err
 	}
 
-	parsed, err := strconv.ParseUint(cfg.Value, 10, 64)
-	if err != nil || parsed == 0 {
-		return 0, fmt.Errorf("invalid %s: %q", adminAccountIDConfigKey, cfg.Value)
+	var account model.Account
+	if err := DB.Where("id = ?", cfg.Value).First(&account).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
-	return uint(parsed), nil
+	return &account, nil
 }
 
-func upsertSystemConfig(key, value string) error {
-	var cfg model.SystemConfig
-	err := DB.Where("key = ?", key).First(&cfg).Error
-	switch {
-	case err == nil:
-		if cfg.Value == value {
-			return nil
-		}
-		cfg.Value = value
-		return DB.Save(&cfg).Error
-	case !errors.Is(err, gorm.ErrRecordNotFound):
+// EnsureAccountUserIDs fills missing account.user_id and enforces uniqueness at DB level.
+func EnsureAccountUserIDs() error {
+	var accounts []model.Account
+	if err := DB.Where("user_id IS NULL OR user_id = ''").Find(&accounts).Error; err != nil {
 		return err
-	default:
-		return DB.Create(&model.SystemConfig{Key: key, Value: value}).Error
 	}
+
+	for _, account := range accounts {
+		if err := DB.Model(&account).Update("user_id", uuid.NewString()).Error; err != nil {
+			return err
+		}
+	}
+
+	return DB.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_user_id_unique ON accounts(user_id)").Error
 }

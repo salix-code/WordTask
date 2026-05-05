@@ -1,13 +1,12 @@
 package db
 
 import (
-	"strconv"
 	"testing"
 
 	"wordtask-server/internal/model"
 )
 
-func TestSeedAccounts_RenameAdminKeepsIdentity(t *testing.T) {
+func TestSeedAccounts_RenameAdminKeepsGUID(t *testing.T) {
 	if err := Init(":memory:"); err != nil {
 		t.Fatalf("init db: %v", err)
 	}
@@ -20,15 +19,17 @@ func TestSeedAccounts_RenameAdminKeepsIdentity(t *testing.T) {
 	if err := DB.Where("name = ?", "admin").First(&before).Error; err != nil {
 		t.Fatalf("find admin: %v", err)
 	}
-	adminIDBefore := before.ID
+	if before.UserID != model.AdminUserID {
+		t.Fatalf("expected admin user_id to be %s, got %s", model.AdminUserID, before.UserID)
+	}
 
 	if err := SeedAccounts("abc"); err != nil {
 		t.Fatalf("seed abc: %v", err)
 	}
 
 	var after model.Account
-	if err := DB.First(&after, adminIDBefore).Error; err != nil {
-		t.Fatalf("find admin by old id: %v", err)
+	if err := DB.Where("user_id = ?", model.AdminUserID).First(&after).Error; err != nil {
+		t.Fatalf("find admin by user_id: %v", err)
 	}
 	if after.Name != "abc" {
 		t.Fatalf("expected renamed admin to be abc, got %s", after.Name)
@@ -41,13 +42,24 @@ func TestSeedAccounts_RenameAdminKeepsIdentity(t *testing.T) {
 	if oldNameCount != 0 {
 		t.Fatalf("expected no account named admin after rename, got %d", oldNameCount)
 	}
+}
 
-	var cfg model.SystemConfig
-	if err := DB.Where("key = ?", adminAccountIDConfigKey).First(&cfg).Error; err != nil {
-		t.Fatalf("find admin config: %v", err)
+func TestSeedAccounts_TesterHasGUID(t *testing.T) {
+	if err := Init(":memory:"); err != nil {
+		t.Fatalf("init db: %v", err)
 	}
-	expectedAdminID := strconv.FormatUint(uint64(adminIDBefore), 10)
-	if cfg.Value != expectedAdminID {
-		t.Fatalf("expected admin_account_id to stay %s, got %s", expectedAdminID, cfg.Value)
+	if err := SeedAccounts("admin"); err != nil {
+		t.Fatalf("seed accounts: %v", err)
+	}
+
+	var tester model.Account
+	if err := DB.Where("name = ?", "tester").First(&tester).Error; err != nil {
+		t.Fatalf("find tester: %v", err)
+	}
+	if tester.UserID == "" {
+		t.Fatalf("expected tester user_id to be generated")
+	}
+	if tester.UserID == model.AdminUserID {
+		t.Fatalf("expected tester user_id not to equal admin guid")
 	}
 }

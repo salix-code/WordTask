@@ -26,12 +26,16 @@ func GetDueReviewWords(userID, wordbook string, limit int) (*ReviewDueResult, er
 	if err := wb.ValidateEnabled(wordbook); err != nil {
 		return nil, err
 	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
+		return nil, err
+	}
 
 	if limit <= 0 {
 		limit = DailyBatchSize
 	}
 
-	if err := ensureReviewProgressRows(userID, wordbook); err != nil {
+	if err := ensureReviewProgressRows(userID, wordbook, wordTable); err != nil {
 		return nil, err
 	}
 
@@ -55,7 +59,7 @@ func GetDueReviewWords(userID, wordbook string, limit int) (*ReviewDueResult, er
 	}
 
 	var words []model.Word
-	if err := db.DB.
+	if err := db.DB.Table(wordTable).
 		Where("wordbook = ? AND id IN ?", wordbook, wordIDs).
 		Find(&words).Error; err != nil {
 		return nil, err
@@ -122,14 +126,23 @@ func SubmitRevision(userID, wordbook string, wordID uint, quality string) error 
 		}).Error
 }
 
-func ensureReviewProgressRows(userID, wordbook string) error {
+func ensureReviewProgressRows(userID, wordbook, wordTable string) error {
+	var completedCycleNos []int
+	if err := db.DB.
+		Model(&model.Cycle{}).
+		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "completed").
+		Pluck("cycle_no", &completedCycleNos).Error; err != nil {
+		return err
+	}
+	if len(completedCycleNos) == 0 {
+		return nil
+	}
+
 	var wordIDs []uint
 	if err := db.DB.
-		Table("word_cycles").
-		Distinct("word_cycles.word_id").
-		Joins("JOIN cycles ON cycles.id = word_cycles.cycle_id").
-		Where("cycles.user_id = ? AND cycles.wordbook = ? AND cycles.status = ? AND word_cycles.status = ?", userID, wordbook, "completed", "known").
-		Pluck("word_cycles.word_id", &wordIDs).Error; err != nil {
+		Table(wordTable).
+		Where("wordbook = ? AND cycle IN ?", wordbook, completedCycleNos).
+		Pluck("id", &wordIDs).Error; err != nil {
 		return err
 	}
 	if len(wordIDs) == 0 {
