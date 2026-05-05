@@ -52,6 +52,10 @@ type TodayWordsResult struct {
 // is promoted to ongoing automatically.
 // The daily batch advances once per calendar day (midnight boundary).
 func GetTodayWords(userID, wordbook string) (*TodayWordsResult, error) {
+	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
+		return nil, err
+	}
+
 	// 1. Load or create UserProgress.
 	var progress model.UserProgress
 	if err := db.DB.

@@ -27,7 +27,8 @@ func main() {
 	}
 
 	// Seed accounts data.
-	if err := db.SeedAccounts(); err != nil {
+	adminAccountName := getEnv("ADMIN_ACCOUNT_NAME", "admin")
+	if err := db.SeedAccounts(adminAccountName); err != nil {
 		log.Fatalf("failed to seed accounts: %v", err)
 	}
 

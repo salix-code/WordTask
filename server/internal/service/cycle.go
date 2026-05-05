@@ -3,6 +3,7 @@ package service
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -162,6 +163,97 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 	return &SetupCycleResult{Ok: true, Results: results}, nil
 }
 
+// ensureUserCyclesFromAdmin clones admin-defined cycles for a non-admin user on first use.
+// Each user gets an independent copy so progress and review status remain isolated.
+func ensureUserCyclesFromAdmin(userID, wordbook string) error {
+	parsedUserID, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil || parsedUserID == 0 {
+		return fmt.Errorf("invalid user id: %s", userID)
+	}
+
+	accountService := AccountService{}
+	isAdmin, err := accountService.IsAdmin(uint(parsedUserID))
+	if err != nil {
+		return err
+	}
+	if isAdmin {
+		return nil
+	}
+
+	var existingCount int64
+	if err := db.DB.Model(&model.Cycle{}).
+		Where("user_id = ? AND wordbook = ?", userID, wordbook).
+		Count(&existingCount).Error; err != nil {
+		return err
+	}
+	if existingCount > 0 {
+		return nil
+	}
+
+	admin, err := accountService.GetAdmin()
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	var templateCycles []model.Cycle
+	if err := db.DB.
+		Where("user_id = ? AND wordbook = ?", fmt.Sprintf("%d", admin.ID), wordbook).
+		Order("created_at ASC, id ASC").
+		Find(&templateCycles).Error; err != nil {
+		return err
+	}
+	if len(templateCycles) == 0 {
+		return nil
+	}
+
+	return db.DB.Transaction(func(tx *gorm.DB) error {
+		for i, templateCycle := range templateCycles {
+			status := "queued"
+			if i == 0 {
+				status = "ongoing"
+			}
+
+			newCycle := model.Cycle{
+				UserID:   userID,
+				Wordbook: wordbook,
+				Status:   status,
+			}
+			if err := tx.Create(&newCycle).Error; err != nil {
+				return fmt.Errorf("create mirrored cycle: %w", err)
+			}
+
+			var templateWordCycles []model.WordCycle
+			if err := tx.
+				Where("cycle_id = ?", templateCycle.ID).
+				Order("sort_order ASC").
+				Find(&templateWordCycles).Error; err != nil {
+				return fmt.Errorf("query template word cycles: %w", err)
+			}
+
+			if len(templateWordCycles) == 0 {
+				continue
+			}
+
+			newWordCycles := make([]model.WordCycle, 0, len(templateWordCycles))
+			for _, twc := range templateWordCycles {
+				newWordCycles = append(newWordCycles, model.WordCycle{
+					WordID:    twc.WordID,
+					CycleID:   newCycle.ID,
+					SortOrder: twc.SortOrder,
+					Status:    "new",
+				})
+			}
+			if err := tx.Create(&newWordCycles).Error; err != nil {
+				return fmt.Errorf("create mirrored word cycles: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
 // ClearAllCycles deletes every cycle (and their word_cycle rows) for the given
 // user + wordbook, and resets the user's completed_count to 0. This allows the
 // user to start fresh from scratch.
@@ -226,6 +318,10 @@ type CycleDetail struct {
 
 // ListCycles returns all cycles of the given user+wordbook for management UI.
 func ListCycles(userID, wordbook string) ([]CycleSummary, error) {
+	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
+		return nil, err
+	}
+
 	type row struct {
 		CycleID    uint
 		Status     string
@@ -264,6 +360,10 @@ func ListCycles(userID, wordbook string) ([]CycleSummary, error) {
 
 // GetCycleWordsByID returns all words for a specific cycle owned by user+wordbook.
 func GetCycleWordsByID(userID, wordbook string, cycleID uint) (*CycleDetail, error) {
+	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
+		return nil, err
+	}
+
 	var cycle model.Cycle
 	if err := db.DB.
 		Where("id = ? AND user_id = ? AND wordbook = ?", cycleID, userID, wordbook).
@@ -305,6 +405,10 @@ func GetCycleWordsByID(userID, wordbook string, cycleID uint) (*CycleDetail, err
 // GetCurrentCycleWords returns all words in the user's ongoing cycle.
 // Returns nil slice (no error) when no ongoing cycle exists.
 func GetCurrentCycleWords(userID, wordbook string) ([]CurrentCycleWord, error) {
+	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
+		return nil, err
+	}
+
 	var cycle model.Cycle
 	err := db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").

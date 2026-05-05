@@ -27,6 +27,7 @@ func Init(dsn string) error {
 
 	if err := db.AutoMigrate(
 		&model.Account{},
+		&model.SystemConfig{},
 		&model.Word{},
 		&model.UserProgress{},
 		&model.Cycle{},

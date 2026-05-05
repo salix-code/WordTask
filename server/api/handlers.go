@@ -150,6 +150,9 @@ func SetupCycle(c *gin.Context) {
 		Fail(c, 400, "invalid params: "+err.Error())
 		return
 	}
+	if !requireAdminUser(c, req.UserID) {
+		return
+	}
 
 	result, err := service.ValidateAndCreateCycle(req.UserID, req.Wordbook, req.Words)
 	if err != nil {
@@ -262,6 +265,9 @@ func UpdateCycle(c *gin.Context) {
 		Fail(c, 400, "invalid params: "+err.Error())
 		return
 	}
+	if !requireAdminUser(c, req.UserID) {
+		return
+	}
 
 	result, err := service.UpdateCurrentCycle(req.UserID, req.Wordbook, req.Words)
 	if err != nil {
@@ -282,6 +288,9 @@ func ClearAllCycles(c *gin.Context) {
 	userID := c.Query("userId")
 	if userID == "" {
 		Fail(c, 400, "userId is required")
+		return
+	}
+	if !requireAdminUser(c, userID) {
 		return
 	}
 	wordbook := c.Query("wordbook")
@@ -323,9 +332,37 @@ func Login(c *gin.Context) {
 		Fail(c, 500, "internal server error")
 		return
 	}
+	isAdmin, err := accountService.IsAdmin(account.ID)
+	if err != nil {
+		log.Printf("[Login] isAdmin error: %v", err)
+		Fail(c, 500, "internal server error")
+		return
+	}
 
 	OK(c, gin.H{
 		"userId":      account.ID,
 		"accountName": account.Name,
+		"isAdmin":     isAdmin,
 	})
+}
+
+func requireAdminUser(c *gin.Context, userID string) bool {
+	parsedUserID, err := strconv.ParseUint(userID, 10, 64)
+	if err != nil || parsedUserID == 0 {
+		Fail(c, 400, "invalid userId")
+		return false
+	}
+
+	accountService := service.AccountService{}
+	isAdmin, err := accountService.IsAdmin(uint(parsedUserID))
+	if err != nil {
+		log.Printf("[requireAdminUser] error: %v", err)
+		Fail(c, 500, "internal server error")
+		return false
+	}
+	if !isAdmin {
+		Fail(c, 403, "admin only")
+		return false
+	}
+	return true
 }
