@@ -16,7 +16,7 @@ export default defineConfig({
     // M2 阶段后端联调时，可通过 proxy 转发 /api 到 Go 后端
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:3335',
         changeOrigin: true,
       },
     },

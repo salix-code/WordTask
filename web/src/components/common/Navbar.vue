@@ -19,7 +19,7 @@ const dailyPercent = computed(() => {
 })
 
 function goHome() {
-  router.push('/')
+  router.push('/student')
 }
 </script>
 

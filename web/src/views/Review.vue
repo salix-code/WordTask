@@ -8,7 +8,7 @@ import SessionSummary from '@/components/review/SessionSummary.vue'
 import { useReviewStore } from '@/store/reviewStore'
 import { useSettingStore } from '@/store/settingStore'
 import type { ReviewQuality } from '@/types/api'
-import { submitReview } from '@/api/word'
+import { submitReview, submitRevision } from '@/api/word'
 
 const router = useRouter()
 const review = useReviewStore()
@@ -19,10 +19,17 @@ onMounted(async () => {
 })
 
 const showSummary = computed(() => review.isSessionFinished)
+const title = computed(() => (review.mode === 'revision' ? '复习中' : '背诵中'))
+const isRevisionEmpty = computed(() => review.mode === 'revision' && review.dailyTotal === 0)
 
 function handleRate(q: ReviewQuality) {
   review.submitCurrentWord(q)
-  submitReview(review.history.at(-1)!.wordId, q, setting.wordbook).catch(console.warn)
+  const wordId = review.history.at(-1)!.wordId
+  if (review.mode === 'revision') {
+    submitRevision(wordId, q, setting.wordbook).catch(console.warn)
+    return
+  }
+  submitReview(wordId, q, setting.wordbook).catch(console.warn)
 }
 
 async function onContinue() {
@@ -31,12 +38,12 @@ async function onContinue() {
 }
 
 function onGoHome() {
-  router.push('/')
+  router.push('/student')
 }
 </script>
 
 <template>
-  <Navbar title="背诵中" />
+  <Navbar :title="title" />
   <main class="flex-1 max-w-xl w-full mx-auto px-4 py-4 flex flex-col gap-4">
     <template v-if="!showSummary && review.currentWord">
       <WordCard
@@ -49,6 +56,14 @@ function onGoHome() {
 
     <template v-else-if="showSummary">
       <SessionSummary @continue="onContinue" @home="onGoHome" />
+    </template>
+
+    <template v-else-if="isRevisionEmpty">
+      <div class="flex-1 flex flex-col items-center justify-center gap-4 text-base-content/60">
+        <div class="text-5xl">🧠</div>
+        <div class="text-lg font-semibold">当前没有到期的复习单词</div>
+        <button class="btn btn-outline" @click="onGoHome">返回首页</button>
+      </div>
     </template>
 
     <template v-else-if="review.wordbookCompleted">

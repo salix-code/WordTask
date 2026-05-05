@@ -1,10 +1,14 @@
 import { defineStore } from 'pinia'
 import type { ReviewQuality } from '@/types/api'
 import type { ReviewRecord, Word } from '@/types/word'
-import { fetchTodayWords } from '@/api/word'
+import { fetchReviewDueWords, fetchTodayWords } from '@/api/word'
 import { useSettingStore } from './settingStore'
 
+export type ReviewMode = 'learn' | 'revision'
+
 interface ReviewState {
+  /** 当前模式：学习新词 / 科学复习 */
+  mode: ReviewMode
   /** 今日所有待复习单词（M1 从 mock；M2 从 /api/words/today） */
   dailyQueue: Word[]
   /** dailyQueue 中下一个待切入 session 的位置 */
@@ -31,6 +35,7 @@ interface ReviewState {
 
 export const useReviewStore = defineStore('review', {
   state: (): ReviewState => ({
+    mode: 'learn',
     dailyQueue: [],
     dailyIndex: 0,
     wordbookCompleted: false,
@@ -74,6 +79,7 @@ export const useReviewStore = defineStore('review', {
      * 在录入新周期成功、切换词库等场景调用，触发下一次 initDaily 时重新拉取。
      */
     reset() {
+      this.mode = 'learn'
       this.dailyQueue = []
       this.dailyIndex = 0
       this.wordbookCompleted = false
@@ -89,6 +95,7 @@ export const useReviewStore = defineStore('review', {
 
     /** 初始化今日队列：从服务器获取今日单词 */
     async initDaily() {
+      this.mode = 'learn'
       const setting = useSettingStore()
       const response = await fetchTodayWords(setting.wordbook)
       if (response.noCycle) {
@@ -109,6 +116,21 @@ export const useReviewStore = defineStore('review', {
         this.dailyCompleted = 0
         return
       }
+      this.noCycle = false
+      this.wordbookCompleted = false
+      this.dailyQueue = response.words
+      this.dailyIndex = 0
+      this.dailyTotal = response.words.length
+      this.dailyCompleted = 0
+      this.history = []
+      this.startNextSession()
+    },
+
+    /** 初始化科学复习队列：从已完成周期拉取到期单词（SM-2） */
+    async initRevision() {
+      this.mode = 'revision'
+      const setting = useSettingStore()
+      const response = await fetchReviewDueWords(setting.wordbook, setting.batchSize)
       this.noCycle = false
       this.wordbookCompleted = false
       this.dailyQueue = response.words

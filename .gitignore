@@ -40,3 +40,12 @@ web/dist/
 # SQLite database files
 *.db
 *.sqlite
+
+# Server local binaries
+server/binaries/
+/.test-run
+start-test.sh
+stop-test.sh
+temp.txt
+/web/dist
+/web/dist

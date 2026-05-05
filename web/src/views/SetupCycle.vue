@@ -1,31 +1,43 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { setupCycle, fetchCurrentCycle, updateCycle, clearAllCycles } from '@/api/cycle'
+import {
+  setupCycle,
+  fetchCycles,
+  fetchCycleDetail,
+  updateCycle,
+  clearAllCycles,
+} from '@/api/cycle'
 import { useReviewStore } from '@/store/reviewStore'
-import type { WordStatus } from '@/types/cycle'
+import { useSettingStore } from '@/store/settingStore'
+import type { WordStatus, CycleSummary } from '@/types/cycle'
 
-const router = useRouter()
 const review = useReviewStore()
+const setting = useSettingStore()
+const selectedWordbook = computed({
+  get: () => setting.wordbook,
+  set: (value: string) => setting.setWordbook(value),
+})
+const wordbookOptions = computed(() => setting.wordbookOptions)
 
-// 每行一个词，空格保留在词内
+const cycles = ref<CycleSummary[]>([])
+const selectedCycleId = ref<number | null>(null)
+const isCreateMode = ref(false)
+
 const textareaVal = ref('')
 const results = ref<WordStatus[]>([])
 const submitting = ref(false)
 const successMsg = ref('')
 const errorMsg = ref('')
-// 是否处于编辑已有周期的模式
-const isEditMode = ref(false)
-// 清空确认弹窗
+const knownTerms = ref<Set<string>>(new Set())
+
+const loadingList = ref(true)
+const loadingDetail = ref(false)
 const showClearConfirm = ref(false)
 const clearing = ref(false)
-// 已有周期中标记为 known 的词（保留展示，防止用户误删）
-const knownTerms = ref<Set<string>>(new Set())
-const loading = ref(true)
 
-const wordbook = 'KET'
+const selectedCycle = computed(() => cycles.value.find((c) => c.cycleId === selectedCycleId.value) ?? null)
+const isReadonlyCycle = computed(() => !isCreateMode.value && selectedCycle.value?.status !== 'ongoing')
 
-// 从 textarea 解析出去重后的词列表（每行一词，忽略空行）
 const tags = computed<string[]>(() => {
   const seen = new Set<string>()
   return textareaVal.value
@@ -40,9 +52,21 @@ const tags = computed<string[]>(() => {
     })
 })
 
-const canSubmit = computed(() => tags.value.length >= 1 && !submitting.value)
+const canSubmit = computed(() => Boolean(selectedWordbook.value) && tags.value.length >= 1 && !submitting.value && !isReadonlyCycle.value)
 
-// 输入变动时清除旧校验结果
+const modeTitle = computed(() => {
+  if (isCreateMode.value) return '新增周期'
+  if (!selectedCycle.value) return '请选择周期'
+  if (selectedCycle.value.status === 'ongoing') return '编辑当前周期'
+  if (selectedCycle.value.status === 'queued') return '查看后续周期'
+  return '查看历史周期'
+})
+
+const submitLabel = computed(() => {
+  if (submitting.value) return isCreateMode.value ? '创建中...' : '更新中...'
+  return isCreateMode.value ? '创建周期' : '更新当前周期'
+})
+
 watch(textareaVal, () => {
   if (results.value.length > 0) {
     results.value = []
@@ -51,27 +75,138 @@ watch(textareaVal, () => {
   }
 })
 
-// 挂载时检查是否已有进行中的周期
 onMounted(async () => {
-  try {
-    const res = await fetchCurrentCycle(wordbook)
-    if (res.hasCycle && res.words.length > 0) {
-      isEditMode.value = true
-      // 预填所有词（包括 known 的）
-      textareaVal.value = res.words.map((w) => w.term).join('\n')
-      // 记录 known 词，供提示展示
-      knownTerms.value = new Set(
-        res.words.filter((w) => w.status === 'known').map((w) => w.term.toLowerCase()),
-      )
-    }
-  } catch {
-    // 拉取失败时静默降级为新建模式
-  } finally {
-    loading.value = false
-  }
+  await setting.ensureWordbooksLoaded()
+  await loadCycles()
 })
 
-// 根据已有 results 获取某个 tag 的状态
+watch(
+  () => selectedWordbook.value,
+  async (next, prev) => {
+    if (!next || next === prev) return
+    await loadCycles()
+  },
+)
+
+function resetFeedback() {
+  results.value = []
+  successMsg.value = ''
+  errorMsg.value = ''
+}
+
+function syncKnownTerms(words: Array<{ term: string; status: string }>) {
+  knownTerms.value = new Set(
+    words
+      .filter((w) => w.status === 'known')
+      .map((w) => w.term.toLowerCase()),
+  )
+}
+
+async function loadCycles(preferCycleId?: number) {
+  loadingList.value = true
+  resetFeedback()
+  try {
+    if (!selectedWordbook.value) {
+      cycles.value = []
+      startCreateMode()
+      return
+    }
+    const res = await fetchCycles(selectedWordbook.value)
+    cycles.value = res.cycles
+    if (cycles.value.length === 0) {
+      startCreateMode()
+      return
+    }
+
+    const preferred = preferCycleId
+      ? cycles.value.find((c) => c.cycleId === preferCycleId)
+      : null
+    const ongoing = cycles.value.find((c) => c.status === 'ongoing')
+    const target = preferred ?? ongoing ?? cycles.value[0]
+    await loadCycleDetail(target.cycleId)
+  } catch (e: unknown) {
+    errorMsg.value = e instanceof Error ? e.message : '加载周期列表失败，请稍后重试。'
+  } finally {
+    loadingList.value = false
+  }
+}
+
+async function loadCycleDetail(cycleId: number) {
+  loadingDetail.value = true
+  resetFeedback()
+  try {
+    const detail = await fetchCycleDetail(cycleId, selectedWordbook.value)
+    selectedCycleId.value = detail.cycleId
+    isCreateMode.value = false
+    textareaVal.value = detail.words.map((w) => w.term).join('\n')
+    syncKnownTerms(detail.words)
+  } catch (e: unknown) {
+    errorMsg.value = e instanceof Error ? e.message : '加载周期详情失败，请稍后重试。'
+  } finally {
+    loadingDetail.value = false
+  }
+}
+
+function startCreateMode() {
+  isCreateMode.value = true
+  selectedCycleId.value = null
+  textareaVal.value = ''
+  knownTerms.value = new Set()
+  resetFeedback()
+}
+
+async function submit() {
+  if (!canSubmit.value) return
+  submitting.value = true
+  resetFeedback()
+  try {
+    if (isCreateMode.value) {
+      const res = await setupCycle({ wordbook: selectedWordbook.value, words: tags.value })
+      results.value = res.results
+      if (res.ok) {
+        successMsg.value = '周期创建成功！'
+        review.reset()
+        await loadCycles()
+      } else {
+        const badCount = res.results.filter((r) => r.status !== 'valid').length
+        errorMsg.value = `有 ${badCount} 个单词存在问题，请修改后重新提交。`
+      }
+      return
+    }
+
+    const res = await updateCycle({ wordbook: selectedWordbook.value, words: tags.value })
+    results.value = res.results
+    if (res.ok) {
+      successMsg.value = '当前周期已更新！'
+      review.reset()
+      if (selectedCycleId.value !== null) {
+        await loadCycleDetail(selectedCycleId.value)
+      }
+    } else {
+      const badCount = res.results.filter((r) => r.status !== 'valid').length
+      errorMsg.value = `有 ${badCount} 个单词存在问题，请修改后重新提交。`
+    }
+  } catch (e: unknown) {
+    errorMsg.value = e instanceof Error ? e.message : '提交失败，请稍后重试。'
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function clearCycles() {
+  clearing.value = true
+  try {
+    await clearAllCycles(selectedWordbook.value)
+    review.reset()
+    await loadCycles()
+  } catch (e: unknown) {
+    errorMsg.value = e instanceof Error ? e.message : '清空失败，请稍后重试。'
+  } finally {
+    clearing.value = false
+    showClearConfirm.value = false
+  }
+}
+
 function tagStatus(term: string): WordStatus['status'] | null {
   if (results.value.length === 0) return null
   const r = results.value.find((x) => x.term.toLowerCase() === term.toLowerCase())
@@ -86,181 +221,165 @@ function tagClass(term: string): string {
   return 'badge badge-neutral'
 }
 
-async function submit() {
-  if (!canSubmit.value) return
-  submitting.value = true
-  successMsg.value = ''
-  errorMsg.value = ''
-  results.value = []
-  try {
-    if (isEditMode.value) {
-      const res = await updateCycle({ wordbook, words: tags.value })
-      results.value = res.results
-      if (res.ok) {
-        successMsg.value = '周期已更新！'
-        review.reset()
-        // 更新 knownTerms
-        knownTerms.value = new Set(
-          tags.value
-            .filter((t) => knownTerms.value.has(t.toLowerCase()))
-            .map((t) => t.toLowerCase()),
-        )
-      } else {
-        const badCount = res.results.filter((r) => r.status !== 'valid').length
-        errorMsg.value = `有 ${badCount} 个单词存在问题，请修改后重新提交。`
-      }
-    } else {
-      const res = await setupCycle({ wordbook, words: tags.value })
-      results.value = res.results
-      if (res.ok) {
-        successMsg.value = '周期创建成功！'
-        review.reset()
-        isEditMode.value = true
-      } else {
-        const badCount = res.results.filter((r) => r.status !== 'valid').length
-        errorMsg.value = `有 ${badCount} 个单词存在问题，请修改后重新提交。`
-      }
-    }
-  } catch (e: unknown) {
-    errorMsg.value = e instanceof Error ? e.message : '提交失败，请稍后重试。'
-  } finally {
-    submitting.value = false
-  }
+function formatCreatedAt(timeText: string): string {
+  const date = new Date(timeText)
+  if (Number.isNaN(date.getTime())) return timeText
+  return date.toLocaleString()
 }
 
-async function clearCycles() {
-  clearing.value = true
-  try {
-    await clearAllCycles(wordbook)
-    // Reset all local state back to fresh-entry mode
-    textareaVal.value = ''
-    results.value = []
-    successMsg.value = ''
-    errorMsg.value = ''
-    isEditMode.value = false
-    knownTerms.value = new Set()
-    review.reset()
-  } catch (e: unknown) {
-    errorMsg.value = e instanceof Error ? e.message : '清空失败，请稍后重试。'
-  } finally {
-    clearing.value = false
-    showClearConfirm.value = false
-  }
-}
-
-function goHome() {
-  router.push('/')
-}
 </script>
 
 <template>
   <div class="flex-1 flex flex-col items-center p-6">
-    <div class="max-w-lg w-full flex flex-col gap-6">
-
-      <!-- 标题 -->
+    <div class="max-w-5xl w-full flex flex-col gap-5">
       <div class="flex items-center gap-3">
-        <button class="btn btn-ghost btn-sm" @click="goHome">← 返回</button>
-        <h1 class="text-xl font-bold">{{ isEditMode ? '编辑当前周期' : '录入单词表' }}</h1>
-        <button
-          v-if="isEditMode"
-          class="btn btn-error btn-sm btn-outline ml-auto"
-          @click="showClearConfirm = true"
-        >清空周期</button>
+        <h1 class="text-xl font-bold">管理周期</h1>
+        <select
+          v-model="selectedWordbook"
+          class="select select-bordered select-sm"
+          :disabled="wordbookOptions.length === 0"
+        >
+          <option
+            v-for="wb in wordbookOptions"
+            :key="wb.code"
+            :value="wb.code"
+          >
+            {{ wb.shortName }}（{{ wb.fullName }}）
+          </option>
+        </select>
+        <button class="btn btn-primary btn-sm ml-auto" @click="startCreateMode">+ 新增周期</button>
+        <button class="btn btn-error btn-sm btn-outline" @click="showClearConfirm = true">删除所有周期</button>
       </div>
 
-      <!-- 清空确认弹窗 -->
       <div v-if="showClearConfirm" class="modal modal-open">
         <div class="modal-box">
-          <h3 class="font-bold text-lg">确认清空所有周期？</h3>
+          <h3 class="font-bold text-lg">确认删除所有周期？</h3>
           <p class="py-4 text-base-content/70">
-            此操作将删除所有历史周期及进度，无法撤销。清空后可重新录入单词表。
+            此操作会删除该词库下全部周期与相关进度，且不可撤销。
           </p>
           <div class="modal-action">
             <button class="btn btn-ghost" :disabled="clearing" @click="showClearConfirm = false">取消</button>
             <button class="btn btn-error" :disabled="clearing" @click="clearCycles">
               <span v-if="clearing" class="loading loading-spinner loading-sm" />
-              {{ clearing ? '清空中...' : '确认清空' }}
+              {{ clearing ? '删除中...' : '确认删除' }}
             </button>
           </div>
         </div>
         <div class="modal-backdrop" @click="showClearConfirm = false" />
       </div>
 
-      <!-- 加载中 -->
-      <div v-if="loading" class="flex justify-center py-8">
-        <span class="loading loading-spinner loading-md" />
+      <div class="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-5">
+        <section class="card bg-base-100 border border-base-300 shadow-sm">
+          <div class="card-body gap-3">
+            <h2 class="card-title text-base">周期列表</h2>
+            <div v-if="loadingList" class="flex justify-center py-6">
+              <span class="loading loading-spinner loading-md" />
+            </div>
+            <template v-else>
+              <div v-if="cycles.length === 0" class="text-sm text-base-content/60">
+                暂无周期，请点击“新增周期”开始录入。
+              </div>
+              <div v-else class="flex flex-col gap-2">
+                <button
+                  v-for="cycle in cycles"
+                  :key="cycle.cycleId"
+                  class="btn justify-start h-auto py-3"
+                  :class="cycle.cycleId === selectedCycleId && !isCreateMode ? 'btn-primary' : 'btn-ghost border border-base-300'"
+                  @click="loadCycleDetail(cycle.cycleId)"
+                >
+                  <div class="flex flex-col items-start text-left w-full">
+                    <div class="flex items-center gap-2">
+                      <span class="font-medium">周期 #{{ cycle.cycleId }}</span>
+                      <span
+                        class="badge badge-sm"
+                        :class="cycle.status === 'ongoing' ? 'badge-info' : (cycle.status === 'queued' ? 'badge-warning' : 'badge-neutral')"
+                      >
+                        {{ cycle.status === 'ongoing' ? '进行中' : (cycle.status === 'queued' ? '待生效' : '已完成') }}
+                      </span>
+                    </div>
+                    <span class="text-xs opacity-70">
+                      {{ cycle.knownWords }}/{{ cycle.totalWords }} 已掌握 · {{ formatCreatedAt(cycle.createdAt) }}
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </template>
+          </div>
+        </section>
+
+        <section class="card bg-base-100 border border-base-300 shadow-sm">
+          <div class="card-body gap-4">
+            <h2 class="card-title text-base">{{ modeTitle }}</h2>
+
+            <div v-if="loadingDetail" class="flex justify-center py-10">
+              <span class="loading loading-spinner loading-md" />
+            </div>
+
+            <template v-else>
+              <p class="text-base-content/60 text-sm">
+                每行一个单词，按 <kbd class="kbd kbd-sm">Enter</kbd> 换行。
+                <template v-if="isReadonlyCycle">仅当前进行中周期可编辑；后续/历史周期仅支持查看。</template>
+                <template v-else-if="!isCreateMode">
+                  当前进行中周期可编辑并提交更新。
+                  <span v-if="knownTerms.size > 0" class="text-warning">⚠ 已掌握词删除后进度不会回退。</span>
+                </template>
+                <template v-else>新增周期至少输入 1 个单词。</template>
+              </p>
+
+              <div v-if="knownTerms.size > 0" class="flex flex-wrap gap-1 text-xs">
+                <span class="text-base-content/50">已掌握：</span>
+                <span
+                  v-for="t in [...knownTerms]"
+                  :key="t"
+                  class="badge badge-success badge-sm"
+                >{{ t }}</span>
+              </div>
+
+              <textarea
+                v-model="textareaVal"
+                placeholder="输入单词，每行一个…"
+                rows="10"
+                :disabled="isReadonlyCycle"
+                class="textarea textarea-bordered w-full text-sm font-mono leading-relaxed focus:textarea-primary resize-y disabled:opacity-80"
+              />
+
+              <div class="flex flex-col gap-2">
+                <div class="flex justify-between text-sm text-base-content/50">
+                  <span>已录入 {{ tags.length }} 个</span>
+                  <span v-if="canSubmit" class="text-success font-medium">可提交</span>
+                </div>
+                <div v-if="results.length > 0" class="flex flex-wrap gap-2">
+                  <span
+                    v-for="tag in tags"
+                    :key="tag"
+                    :class="[tagClass(tag), 'select-none']"
+                  >{{ tag }}</span>
+                </div>
+              </div>
+
+              <div v-if="errorMsg" class="alert alert-error text-sm">{{ errorMsg }}</div>
+              <div v-if="successMsg" class="alert alert-success text-sm">
+                {{ successMsg }}
+              </div>
+
+              <div v-if="results.length > 0 && !successMsg" class="flex gap-3 text-xs text-base-content/60">
+                <span><span class="badge badge-error badge-sm mr-1" />不在词典中</span>
+                <span><span class="badge badge-warning badge-sm mr-1" />其他周期已用过</span>
+                <span><span class="badge badge-success badge-sm mr-1" />有效</span>
+              </div>
+
+              <button
+                class="btn btn-primary self-center"
+                :disabled="!canSubmit"
+                @click="submit"
+              >
+                <span v-if="submitting" class="loading loading-spinner loading-sm" />
+                {{ submitLabel }}
+              </button>
+            </template>
+          </div>
+        </section>
       </div>
-
-      <template v-else>
-        <!-- 说明 -->
-        <p class="text-base-content/60 text-sm">
-          每行一个单词，按 <kbd class="kbd kbd-sm">Enter</kbd> 换行；单词内部空格会保留（如 <em>go home</em>）。
-          <template v-if="isEditMode">
-            直接修改后提交即可同步到当前周期。
-            <span v-if="knownTerms.size > 0" class="text-warning">⚠ 已掌握的词删除后进度不会回退。</span>
-          </template>
-          <template v-else>至少输入 1 个即可提交。</template>
-        </p>
-
-        <!-- 已掌握词提示 -->
-        <div v-if="isEditMode && knownTerms.size > 0" class="flex flex-wrap gap-1 text-xs">
-          <span class="text-base-content/50">已掌握：</span>
-          <span
-            v-for="t in [...knownTerms]"
-            :key="t"
-            class="badge badge-success badge-sm"
-          >{{ t }}</span>
-        </div>
-
-        <!-- 文本输入区 -->
-        <textarea
-          v-model="textareaVal"
-          placeholder="输入单词，每行一个…"
-          rows="8"
-          class="textarea textarea-bordered w-full text-sm font-mono leading-relaxed focus:textarea-primary resize-y"
-        />
-
-        <!-- 进度 + 标签预览 -->
-        <div class="flex flex-col gap-2">
-          <div class="flex justify-between text-sm text-base-content/50">
-            <span>已录入 {{ tags.length }} 个</span>
-            <span v-if="tags.length >= 1" class="text-success font-medium">可提交</span>
-          </div>
-          <!-- 校验结果标签（提交后显示） -->
-          <div v-if="results.length > 0" class="flex flex-wrap gap-2">
-            <span
-              v-for="tag in tags"
-              :key="tag"
-              :class="[tagClass(tag), 'select-none']"
-            >{{ tag }}</span>
-          </div>
-        </div>
-
-        <!-- 错误/成功提示 -->
-        <div v-if="errorMsg" class="alert alert-error text-sm">{{ errorMsg }}</div>
-        <div v-if="successMsg" class="alert alert-success text-sm">
-          {{ successMsg }}
-          <button class="btn btn-sm btn-ghost ml-auto" @click="goHome">返回主页</button>
-        </div>
-
-        <!-- 图例（仅校验后显示） -->
-        <div v-if="results.length > 0 && !successMsg" class="flex gap-3 text-xs text-base-content/60">
-          <span><span class="badge badge-error badge-sm mr-1" />不在词典中</span>
-          <span><span class="badge badge-warning badge-sm mr-1" />其他周期已用过</span>
-          <span><span class="badge badge-success badge-sm mr-1" />有效</span>
-        </div>
-
-        <!-- 提交按钮 -->
-        <button
-          class="btn btn-primary btn-wide self-center"
-          :disabled="!canSubmit"
-          @click="submit"
-        >
-          <span v-if="submitting" class="loading loading-spinner loading-sm" />
-          {{ submitting ? (isEditMode ? '更新中...' : '校验中...') : (isEditMode ? '更新周期' : '提交') }}
-        </button>
-      </template>
-
     </div>
   </div>
 </template>

@@ -2,6 +2,8 @@
 
 ## 当前词库
 
+> 实际启用/导入由 `server/config/wordbooks.json` 控制（code、名称、jsonPath、importer、enabled）。
+
 | 文件 | 词条数 | 说明 |
 | --- | --- | --- |
 | `ket-a2-key.json` | 1,721 | KET (A2 Key for Schools) 原始词表，来自 [honorwu/ketwords](https://github.com/honorwu/ketwords)，基于剑桥 2020 官方词表 PDF 解析 |

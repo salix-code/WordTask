@@ -4,8 +4,17 @@ import { useUserStore } from '@/store/userStore'
 const routes: RouteRecordRaw[] = [
   {
     path: '/',
-    name: 'Home',
-    component: () => import('@/views/Home.vue'),
+    name: 'RootEntry',
+    redirect: () => {
+      const userStore = useUserStore()
+      userStore.logout()
+      return { name: 'Login' }
+    },
+  },
+  {
+    path: '/student',
+    name: 'Student',
+    component: () => import('@/views/Student.vue'),
     meta: { requiresAuth: true },
   },
   {
@@ -20,14 +29,19 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Login.vue'),
   },
   {
+    path: '/admin',
+    name: 'Admin',
+    component: () => import('@/views/Admin.vue'),
+    meta: { requiresAuth: true, requiresAdmin: true },
+  },
+  {
     path: '/setup-cycle',
     name: 'SetupCycle',
-    component: () => import('@/views/SetupCycle.vue'),
-    meta: { requiresAuth: true },
+    redirect: { name: 'Admin' },
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/',
+    redirect: '/student',
   },
 ]
 
@@ -42,13 +56,15 @@ router.beforeEach((to, _from, next) => {
 
   const isLoggedIn = userStore.isLoggedIn
   const requiresAuth = to.meta.requiresAuth
+  const requiresAdmin = to.meta.requiresAdmin
 
   if (requiresAuth && !isLoggedIn) {
     // 需要认证但未登录，跳转到登录页
     next({ name: 'Login' })
+  } else if (requiresAdmin && !userStore.isAdmin) {
+    next({ name: 'Student' })
   } else if (to.name === 'Login' && isLoggedIn) {
-    // 已登录但要访问登录页，跳转到首页
-    next({ name: 'Home' })
+    next({ name: userStore.isAdmin ? 'Admin' : 'Student' })
   } else {
     // 其他情况，正常放行
     next()

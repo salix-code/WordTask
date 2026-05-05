@@ -21,7 +21,7 @@ async function onLogin() {
   try {
     const res = await apiLogin(accountName.value)
     userStore.login(res)
-    router.push('/')
+    router.push(res.isAdmin ? '/admin' : '/student')
   } catch (err: any) {
     errorMsg.value = (err as Error).message || '网络错误，请稍后再试'
   } finally {
@@ -42,7 +42,7 @@ async function onLogin() {
             v-model="accountName"
             type="text"
             class="input input-bordered"
-            placeholder="例如：tester"
+            placeholder=""
             @keyup.enter="onLogin"
           />
         </div>
@@ -57,9 +57,7 @@ async function onLogin() {
           <span v-if="isLoading" class="loading loading-spinner"></span>
           登录
         </button>
-        <p class="text-xs text-base-content/50 text-center">
-          预设账号: tester / admin
-        </p>
+        
       </div>
     </div>
   </div>

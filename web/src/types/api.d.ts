@@ -9,3 +9,9 @@ export interface ApiResponse<T = unknown> {
 }
 
 export type ReviewQuality = 'forgot' | 'vague' | 'known'
+
+export interface WordbookItem {
+  code: string
+  shortName: string
+  fullName: string
+}

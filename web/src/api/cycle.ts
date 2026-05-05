@@ -1,5 +1,11 @@
 import { http } from './index'
-import type { SetupCycleResult, CurrentCycleResult, UpdateCycleResult } from '@/types/cycle'
+import type {
+  SetupCycleResult,
+  CurrentCycleResult,
+  UpdateCycleResult,
+  CycleListResult,
+  CycleDetailResult,
+} from '@/types/cycle'
 import { useUserStore } from '@/store/userStore'
 
 export interface SetupCyclePayload {
@@ -27,6 +33,32 @@ export function fetchCurrentCycle(wordbook: string): Promise<CurrentCycleResult>
   const userStore = useUserStore()
   return http
     .get<CurrentCycleResult>('/cycles/current', {
+      params: {
+        userId: userStore.userId !== null ? String(userStore.userId) : null,
+        wordbook,
+      },
+    })
+    .then((r) => r.data)
+}
+
+/** 获取周期列表（ongoing + completed） */
+export function fetchCycles(wordbook: string): Promise<CycleListResult> {
+  const userStore = useUserStore()
+  return http
+    .get<CycleListResult>('/cycles', {
+      params: {
+        userId: userStore.userId !== null ? String(userStore.userId) : null,
+        wordbook,
+      },
+    })
+    .then((r) => r.data)
+}
+
+/** 获取指定周期详情 */
+export function fetchCycleDetail(cycleId: number, wordbook: string): Promise<CycleDetailResult> {
+  const userStore = useUserStore()
+  return http
+    .get<CycleDetailResult>(`/cycles/${cycleId}`, {
       params: {
         userId: userStore.userId !== null ? String(userStore.userId) : null,
         wordbook,
