@@ -1,0 +1,12 @@
+{
+  "wordbooks": [
+    {
+      "code": "KET",
+      "shortName": "KET",
+      "fullName": "A2 Key for Schools",
+      "jsonPath": "ket-a2-key.enriched.json",
+      "importer": "ket_enriched_v1",
+      "enabled": true
+    }
+  ]
+}

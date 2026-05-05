@@ -11,6 +11,7 @@ import (
 
 	"wordtask-server/internal/db"
 	"wordtask-server/internal/model"
+	wb "wordtask-server/internal/wordbook"
 )
 
 // ErrInvalidCycleInput indicates that the caller supplied invalid parameters
@@ -43,6 +44,10 @@ type SetupCycleResult struct {
 // Returns ErrInvalidCycleInput for user-facing validation errors that should
 // surface as HTTP 400.
 func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycleResult, error) {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return nil, err
+	}
+
 	if len(terms) < 1 {
 		return nil, fmt.Errorf("%w: at least 1 word is required", ErrInvalidCycleInput)
 	}
@@ -166,6 +171,10 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 // ensureUserCyclesFromAdmin clones admin-defined cycles for a non-admin user on first use.
 // Each user gets an independent copy so progress and review status remain isolated.
 func ensureUserCyclesFromAdmin(userID, wordbook string) error {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return err
+	}
+
 	parsedUserID, err := strconv.ParseUint(userID, 10, 64)
 	if err != nil || parsedUserID == 0 {
 		return fmt.Errorf("invalid user id: %s", userID)
@@ -258,6 +267,10 @@ func ensureUserCyclesFromAdmin(userID, wordbook string) error {
 // user + wordbook, and resets the user's completed_count to 0. This allows the
 // user to start fresh from scratch.
 func ClearAllCycles(userID, wordbook string) error {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return err
+	}
+
 	return db.DB.Transaction(func(tx *gorm.DB) error {
 		// Collect cycle IDs belonging to this user+wordbook.
 		var cycleIDs []uint
@@ -456,6 +469,10 @@ type UpdateCurrentCycleResult struct {
 //
 // "already_used" check only applies to OTHER cycles, not the current one.
 func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrentCycleResult, error) {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return nil, err
+	}
+
 	if len(terms) < 1 {
 		return nil, fmt.Errorf("%w: at least 1 word is required", ErrInvalidCycleInput)
 	}

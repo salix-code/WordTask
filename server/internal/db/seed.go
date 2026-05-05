@@ -10,15 +10,11 @@ import (
 
 	"gorm.io/gorm"
 	"wordtask-server/internal/model"
+	"wordtask-server/internal/wordbook"
 )
 
-// wordbookFiles maps wordbook names to their JSON filenames under wordbookDir.
-var wordbookFiles = map[string]string{
-	"KET": "ket-a2-key.enriched.json",
-}
-
-// jsonWord mirrors the enriched JSON structure for decoding.
-type jsonWord struct {
+// ketEnrichedWord mirrors KET enriched JSON structure for decoding.
+type ketEnrichedWord struct {
 	SourceOrder    int      `json:"sourceOrder"`
 	Term           string   `json:"term"`
 	PartOfSpeech   string   `json:"partOfSpeech"`
@@ -30,40 +26,66 @@ type jsonWord struct {
 	Phonetic       string   `json:"phonetic"`
 }
 
-// SeedWords seeds the words table from JSON files if the table is empty.
+type wordImporter func(wordbookCode string, data []byte) ([]model.Word, error)
+
+var importers = map[string]wordImporter{
+	"ket_enriched_v1": importKETEnrichedV1,
+}
+
+// SeedWords seeds words table per enabled wordbook.
 // wordbookDir is the directory containing the wordbook JSON files.
 func SeedWords(wordbookDir string) error {
-	var count int64
-	DB.Model(&model.Word{}).Count(&count)
-	if count > 0 {
-		return nil // already seeded
-	}
+	for _, wb := range wordbook.GetEnabled() {
+		var count int64
+		if err := DB.Model(&model.Word{}).Where("wordbook = ?", wb.Code).Count(&count).Error; err != nil {
+			return fmt.Errorf("count words for %s: %w", wb.Code, err)
+		}
+		if count > 0 {
+			continue
+		}
 
-	for wordbook, filename := range wordbookFiles {
-		path := filepath.Join(wordbookDir, filename)
-		if err := seedWordbook(wordbook, path); err != nil {
-			return fmt.Errorf("seed %s: %w", wordbook, err)
+		importer, ok := importers[wb.Importer]
+		if !ok {
+			return fmt.Errorf("wordbook %s uses unsupported importer %s", wb.Code, wb.Importer)
+		}
+
+		path := wb.JSONPath
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(wordbookDir, path)
+		}
+		if err := seedWordbook(wb.Code, path, importer); err != nil {
+			return fmt.Errorf("seed %s: %w", wb.Code, err)
 		}
 	}
 	return nil
 }
 
-func seedWordbook(wordbook, path string) error {
+func seedWordbook(wordbookCode, path string, importer wordImporter) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
 
-	var raw []jsonWord
-	if err := json.Unmarshal(data, &raw); err != nil {
+	words, err := importer(wordbookCode, data)
+	if err != nil {
 		return err
+	}
+
+	// Insert in batches to avoid hitting SQLite variable limits.
+	return DB.CreateInBatches(words, 200).Error
+}
+
+func importKETEnrichedV1(wordbookCode string, data []byte) ([]model.Word, error) {
+	var raw []ketEnrichedWord
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
 	}
 
 	words := make([]model.Word, 0, len(raw))
 	for _, jw := range raw {
 		exJSON, _ := json.Marshal(jw.Examples)
 		words = append(words, model.Word{
-			Wordbook:       wordbook,
+			Wordbook:       wordbookCode,
 			SourceOrder:    jw.SourceOrder,
 			Term:           jw.Term,
 			Phonetic:       jw.Phonetic,
@@ -75,9 +97,7 @@ func seedWordbook(wordbook, path string) error {
 			LearningTarget: jw.LearningTarget,
 		})
 	}
-
-	// Insert in batches to avoid hitting SQLite variable limits.
-	return DB.CreateInBatches(words, 200).Error
+	return words, nil
 }
 
 // SeedAccounts pre-populates the accounts table with some default accounts.

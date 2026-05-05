@@ -9,12 +9,17 @@ import (
 
 	"wordtask-server/internal/db"
 	"wordtask-server/internal/model"
+	wb "wordtask-server/internal/wordbook"
 )
 
 // MarkWordKnown marks a single word as 'known' within the user's active cycle.
 // If all words in the cycle become known, the cycle is completed and
 // UserProgress.CompletedCount is advanced by the actual cycle word count.
 func MarkWordKnown(userID, wordbook string, wordID uint) error {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return err
+	}
+
 	// 1. Find the active cycle.
 	var cycle model.Cycle
 	if err := db.DB.

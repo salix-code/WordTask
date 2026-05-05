@@ -9,11 +9,26 @@ import (
 	"gorm.io/gorm"
 
 	"wordtask-server/internal/service"
+	"wordtask-server/internal/wordbook"
 )
 
 // Ping handles health check.
 func Ping(c *gin.Context) {
 	OK(c, gin.H{"message": "pong"})
+}
+
+// ListWordbooks handles GET /api/wordbooks.
+func ListWordbooks(c *gin.Context) {
+	enabled := wordbook.GetEnabled()
+	items := make([]gin.H, 0, len(enabled))
+	for _, wb := range enabled {
+		items = append(items, gin.H{
+			"code":      wb.Code,
+			"shortName": wb.ShortName,
+			"fullName":  wb.FullName,
+		})
+	}
+	OK(c, gin.H{"wordbooks": items})
 }
 
 // GetTodayWords handles GET /api/words/today?userId=xxx&wordbook=KET
@@ -31,6 +46,10 @@ func GetTodayWords(c *gin.Context) {
 
 	result, err := service.GetTodayWords(userID, wordbook)
 	if err != nil {
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[GetTodayWords] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -64,6 +83,10 @@ func GetReviewDueWords(c *gin.Context) {
 
 	result, err := service.GetDueReviewWords(userID, wordbook, limit)
 	if err != nil {
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[GetReviewDueWords] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -90,6 +113,10 @@ func SubmitReview(c *gin.Context) {
 
 	if req.Quality == "known" {
 		if err := service.MarkWordKnown(req.UserID, req.Wordbook, req.WordID); err != nil {
+			if isWordbookRequestError(err) {
+				Fail(c, 400, err.Error())
+				return
+			}
 			log.Printf("[SubmitReview] MarkWordKnown error: %v", err)
 			Fail(c, 500, "internal server error")
 			return
@@ -111,6 +138,10 @@ func SubmitRevision(c *gin.Context) {
 	}
 
 	if err := service.SubmitRevision(req.UserID, req.Wordbook, req.WordID, req.Quality); err != nil {
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[SubmitRevision] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -160,6 +191,10 @@ func SetupCycle(c *gin.Context) {
 			Fail(c, 400, err.Error())
 			return
 		}
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[SetupCycle] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -183,6 +218,10 @@ func GetCurrentCycle(c *gin.Context) {
 
 	words, err := service.GetCurrentCycleWords(userID, wordbook)
 	if err != nil {
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[GetCurrentCycle] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -210,6 +249,10 @@ func ListCycles(c *gin.Context) {
 
 	cycles, err := service.ListCycles(userID, wordbook)
 	if err != nil {
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[ListCycles] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -240,6 +283,10 @@ func GetCycleDetail(c *gin.Context) {
 	detail, err := service.GetCycleWordsByID(userID, wordbook, uint(id))
 	if err != nil {
 		if errors.Is(err, service.ErrInvalidCycleInput) {
+			Fail(c, 400, err.Error())
+			return
+		}
+		if isWordbookRequestError(err) {
 			Fail(c, 400, err.Error())
 			return
 		}
@@ -275,6 +322,10 @@ func UpdateCycle(c *gin.Context) {
 			Fail(c, 400, err.Error())
 			return
 		}
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[UpdateCycle] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -300,6 +351,10 @@ func ClearAllCycles(c *gin.Context) {
 	}
 
 	if err := service.ClearAllCycles(userID, wordbook); err != nil {
+		if isWordbookRequestError(err) {
+			Fail(c, 400, err.Error())
+			return
+		}
 		log.Printf("[ClearAllCycles] error: %v", err)
 		Fail(c, 500, "internal server error")
 		return
@@ -365,4 +420,8 @@ func requireAdminUser(c *gin.Context, userID string) bool {
 		return false
 	}
 	return true
+}
+
+func isWordbookRequestError(err error) bool {
+	return errors.Is(err, wordbook.ErrWordbookNotFound) || errors.Is(err, wordbook.ErrWordbookDisabled)
 }

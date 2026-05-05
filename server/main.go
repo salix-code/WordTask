@@ -9,6 +9,7 @@ import (
 
 	"wordtask-server/api"
 	"wordtask-server/internal/db"
+	"wordtask-server/internal/wordbook"
 )
 
 func main() {
@@ -21,6 +22,10 @@ func main() {
 	}
 
 	// Seed wordbook data on first run.
+	wordbookConfig := getEnv("WORDBOOK_CONFIG", "./config/wordbooks.json")
+	if err := wordbook.LoadRegistry(wordbookConfig); err != nil {
+		log.Fatalf("failed to load wordbook config: %v", err)
+	}
 	wordbookDir := getEnv("WORDBOOK_DIR", "../data/wordbooks")
 	if err := db.SeedWords(wordbookDir); err != nil {
 		log.Fatalf("failed to seed words: %v", err)
@@ -45,6 +50,8 @@ func main() {
 
 	apiGroup := r.Group("/api")
 	{
+		apiGroup.GET("/wordbooks", api.ListWordbooks)
+
 		words := apiGroup.Group("/words")
 		{
 			words.GET("/today", api.GetTodayWords)

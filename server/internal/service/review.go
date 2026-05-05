@@ -10,6 +10,7 @@ import (
 
 	"wordtask-server/internal/db"
 	"wordtask-server/internal/model"
+	wb "wordtask-server/internal/wordbook"
 )
 
 const defaultEaseFactor = 2.5
@@ -22,6 +23,10 @@ type ReviewDueResult struct {
 
 // GetDueReviewWords returns due words from completed cycles using SM-2 schedule.
 func GetDueReviewWords(userID, wordbook string, limit int) (*ReviewDueResult, error) {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return nil, err
+	}
+
 	if limit <= 0 {
 		limit = DailyBatchSize
 	}
@@ -74,6 +79,10 @@ func GetDueReviewWords(userID, wordbook string, limit int) (*ReviewDueResult, er
 
 // SubmitRevision applies SM-2 update for one review result.
 func SubmitRevision(userID, wordbook string, wordID uint, quality string) error {
+	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return err
+	}
+
 	now := time.Now()
 	var p model.ReviewProgress
 	err := db.DB.
