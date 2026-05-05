@@ -3,7 +3,6 @@ package service
 import (
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -31,20 +30,14 @@ type SetupCycleResult struct {
 	Results []WordValidationResult `json:"results"`
 }
 
-// ValidateAndCreateCycle validates the provided word list and, if all words
-// pass validation, creates a new cycle with those words for the given user.
-//
-// Validation rules:
-//  1. len(words) must be >= 1.
-//  2. At most one cycle can be ongoing; if one already exists, new cycle is queued.
-//  3. Each word must exist in the words table (case-insensitive match on term).
-//  4. Each word must not have been used in ANY existing cycle
-//     (ongoing or queued or completed) for this user + wordbook.
-//
-// Returns ErrInvalidCycleInput for user-facing validation errors that should
-// surface as HTTP 400.
+// ValidateAndCreateCycle validates and creates a cycle definition.
+// Selected words are assigned by setting the dictionary table's cycle column.
 func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycleResult, error) {
 	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return nil, err
+	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
 		return nil, err
 	}
 
@@ -64,7 +57,7 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 
 	// Check whether there is already an ongoing cycle.
 	var existingOngoing model.Cycle
-	err := db.DB.
+	err = db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&existingOngoing).Error
 	hasOngoing := err == nil
@@ -80,7 +73,7 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 
 	// 1. Batch-query words table (case-insensitive).
 	var matchedWords []model.Word
-	if err := db.DB.
+	if err := db.DB.Table(wordTable).
 		Where("wordbook = ? AND LOWER(term) IN ?", wordbook, lowerTerms).
 		Find(&matchedWords).Error; err != nil {
 		return nil, fmt.Errorf("query words: %w", err)
@@ -92,15 +85,13 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 		wordMap[strings.ToLower(w.Term)] = w
 	}
 
-	// 2. Collect all word IDs used in ANY cycle (ongoing or queued or completed) of this user + wordbook.
+	// 2. Collect all word IDs already assigned to any cycle.
 	usedWordIDs := make(map[uint]struct{})
 	var usedIDs []uint
 	if err := db.DB.
-		Table("word_cycles").
-		Select("word_cycles.word_id").
-		Joins("JOIN cycles ON cycles.id = word_cycles.cycle_id").
-		Where("cycles.user_id = ? AND cycles.wordbook = ?", userID, wordbook).
-		Scan(&usedIDs).Error; err != nil {
+		Table(wordTable).
+		Where("wordbook = ? AND cycle > 0", wordbook).
+		Pluck("id", &usedIDs).Error; err != nil {
 		return nil, fmt.Errorf("query used word ids: %w", err)
 	}
 	for _, id := range usedIDs {
@@ -132,33 +123,40 @@ func ValidateAndCreateCycle(userID, wordbook string, terms []string) (*SetupCycl
 		return &SetupCycleResult{Ok: false, Results: results}, nil
 	}
 
-	// 4. All words are valid — create the new cycle and word_cycle rows in a transaction.
-	// If there is already an ongoing cycle, this new one is queued.
+	// 4. All words are valid — create cycle row and assign words.
 	if err := db.DB.Transaction(func(tx *gorm.DB) error {
 		status := "ongoing"
 		if hasOngoing {
 			status = "queued"
 		}
+
+		var maxWordCycle int
+		if err := tx.Table(wordTable).
+			Where("wordbook = ?", wordbook).
+			Select("COALESCE(MAX(cycle), 0)").
+			Scan(&maxWordCycle).Error; err != nil {
+			return fmt.Errorf("query max word cycle: %w", err)
+		}
+		nextCycleNo := maxWordCycle + 1
+
 		newCycle := model.Cycle{
 			UserID:   userID,
 			Wordbook: wordbook,
+			CycleNo:  nextCycleNo,
 			Status:   status,
 		}
 		if err := tx.Create(&newCycle).Error; err != nil {
 			return fmt.Errorf("create cycle: %w", err)
 		}
 
-		wordCycles := make([]model.WordCycle, len(validWords))
-		for i, w := range validWords {
-			wordCycles[i] = model.WordCycle{
-				WordID:    w.ID,
-				CycleID:   newCycle.ID,
-				SortOrder: i + 1,
-				Status:    "new",
-			}
+		wordIDs := make([]uint, 0, len(validWords))
+		for _, w := range validWords {
+			wordIDs = append(wordIDs, w.ID)
 		}
-		if err := tx.Create(&wordCycles).Error; err != nil {
-			return fmt.Errorf("create word_cycles: %w", err)
+		if err := tx.Table(wordTable).
+			Where("wordbook = ? AND id IN ?", wordbook, wordIDs).
+			Update("cycle", nextCycleNo).Error; err != nil {
+			return fmt.Errorf("assign words to cycle: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -175,13 +173,8 @@ func ensureUserCyclesFromAdmin(userID, wordbook string) error {
 		return err
 	}
 
-	parsedUserID, err := strconv.ParseUint(userID, 10, 64)
-	if err != nil || parsedUserID == 0 {
-		return fmt.Errorf("invalid user id: %s", userID)
-	}
-
 	accountService := AccountService{}
-	isAdmin, err := accountService.IsAdmin(uint(parsedUserID))
+	isAdmin, err := accountService.IsAdmin(userID)
 	if err != nil {
 		return err
 	}
@@ -209,7 +202,7 @@ func ensureUserCyclesFromAdmin(userID, wordbook string) error {
 
 	var templateCycles []model.Cycle
 	if err := db.DB.
-		Where("user_id = ? AND wordbook = ?", fmt.Sprintf("%d", admin.ID), wordbook).
+		Where("user_id = ? AND wordbook = ?", admin.UserID, wordbook).
 		Order("created_at ASC, id ASC").
 		Find(&templateCycles).Error; err != nil {
 		return err
@@ -228,35 +221,11 @@ func ensureUserCyclesFromAdmin(userID, wordbook string) error {
 			newCycle := model.Cycle{
 				UserID:   userID,
 				Wordbook: wordbook,
+				CycleNo:  templateCycle.CycleNo,
 				Status:   status,
 			}
 			if err := tx.Create(&newCycle).Error; err != nil {
 				return fmt.Errorf("create mirrored cycle: %w", err)
-			}
-
-			var templateWordCycles []model.WordCycle
-			if err := tx.
-				Where("cycle_id = ?", templateCycle.ID).
-				Order("sort_order ASC").
-				Find(&templateWordCycles).Error; err != nil {
-				return fmt.Errorf("query template word cycles: %w", err)
-			}
-
-			if len(templateWordCycles) == 0 {
-				continue
-			}
-
-			newWordCycles := make([]model.WordCycle, 0, len(templateWordCycles))
-			for _, twc := range templateWordCycles {
-				newWordCycles = append(newWordCycles, model.WordCycle{
-					WordID:    twc.WordID,
-					CycleID:   newCycle.ID,
-					SortOrder: twc.SortOrder,
-					Status:    "new",
-				})
-			}
-			if err := tx.Create(&newWordCycles).Error; err != nil {
-				return fmt.Errorf("create mirrored word cycles: %w", err)
 			}
 		}
 		return nil
@@ -270,36 +239,57 @@ func ClearAllCycles(userID, wordbook string) error {
 	if err := wb.ValidateEnabled(wordbook); err != nil {
 		return err
 	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
+		return err
+	}
+
+	accountService := AccountService{}
+	isAdmin, err := accountService.IsAdmin(userID)
+	if err != nil {
+		return err
+	}
 
 	return db.DB.Transaction(func(tx *gorm.DB) error {
-		// Collect cycle IDs belonging to this user+wordbook.
 		var cycleIDs []uint
+		var cycleNos []int
 		if err := tx.Model(&model.Cycle{}).
 			Where("user_id = ? AND wordbook = ?", userID, wordbook).
 			Pluck("id", &cycleIDs).Error; err != nil {
 			return fmt.Errorf("query cycle ids: %w", err)
 		}
+		if err := tx.Model(&model.Cycle{}).
+			Where("user_id = ? AND wordbook = ?", userID, wordbook).
+			Pluck("cycle_no", &cycleNos).Error; err != nil {
+			return fmt.Errorf("query cycle nos: %w", err)
+		}
 
 		if len(cycleIDs) > 0 {
-			// Delete word_cycle rows first (foreign-key order).
-			if err := tx.Where("cycle_id IN ?", cycleIDs).
-				Delete(&model.WordCycle{}).Error; err != nil {
-				return fmt.Errorf("delete word_cycles: %w", err)
-			}
-			// Delete the cycles themselves.
 			if err := tx.Where("id IN ?", cycleIDs).
 				Delete(&model.Cycle{}).Error; err != nil {
 				return fmt.Errorf("delete cycles: %w", err)
 			}
 		}
+		if isAdmin && len(cycleNos) > 0 {
+			if err := tx.Table(wordTable).
+				Where("wordbook = ? AND cycle IN ?", wordbook, cycleNos).
+				Update("cycle", 0).Error; err != nil {
+				return fmt.Errorf("clear cycle assignment: %w", err)
+			}
+		}
 
-		// Reset progress counter.
 		if err := tx.Model(&model.UserProgress{}).
 			Where("user_id = ? AND wordbook = ?", userID, wordbook).
 			Updates(map[string]interface{}{
-				"completed_count": 0,
+				"completed_count":        0,
+				"last_session_completed": 0,
 			}).Error; err != nil {
 			return fmt.Errorf("reset user progress: %w", err)
+		}
+
+		if err := tx.Where("user_id = ? AND wordbook = ?", userID, wordbook).
+			Delete(&model.ReviewProgress{}).Error; err != nil {
+			return fmt.Errorf("clear review progress: %w", err)
 		}
 
 		return nil
@@ -334,39 +324,44 @@ func ListCycles(userID, wordbook string) ([]CycleSummary, error) {
 	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
 		return nil, err
 	}
-
-	type row struct {
-		CycleID    uint
-		Status     string
-		CreatedAt  time.Time
-		TotalWords int64
-		KnownWords int64
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
+		return nil, err
 	}
-	var rows []row
-	if err := db.DB.
-		Table("cycles").
-		Select(
-			"cycles.id AS cycle_id, cycles.status, cycles.created_at, "+
-				"COUNT(word_cycles.word_id) AS total_words, "+
-				"COALESCE(SUM(CASE WHEN word_cycles.status = 'known' THEN 1 ELSE 0 END), 0) AS known_words",
-		).
-		Joins("LEFT JOIN word_cycles ON word_cycles.cycle_id = cycles.id").
-		Where("cycles.user_id = ? AND cycles.wordbook = ?", userID, wordbook).
-		Group("cycles.id, cycles.status, cycles.created_at").
-		Order("CASE cycles.status WHEN 'ongoing' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, cycles.created_at DESC").
-		Scan(&rows).Error; err != nil {
+
+	var cycles []model.Cycle
+	if err = db.DB.
+		Where("user_id = ? AND wordbook = ?", userID, wordbook).
+		Order("CASE status WHEN 'ongoing' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END, created_at DESC").
+		Find(&cycles).Error; err != nil {
 		return nil, fmt.Errorf("list cycles: %w", err)
 	}
 
-	result := make([]CycleSummary, len(rows))
-	for i, r := range rows {
-		result[i] = CycleSummary{
-			CycleID:    r.CycleID,
-			Status:     r.Status,
-			CreatedAt:  r.CreatedAt,
-			TotalWords: r.TotalWords,
-			KnownWords: r.KnownWords,
+	result := make([]CycleSummary, 0, len(cycles))
+	for _, cycle := range cycles {
+		var totalWords int64
+		if err := db.DB.Table(wordTable).
+			Where("wordbook = ? AND cycle = ?", wordbook, cycle.CycleNo).
+			Count(&totalWords).Error; err != nil {
+			return nil, fmt.Errorf("count cycle words: %w", err)
 		}
+
+		var knownWords int64
+		if err := db.DB.Model(&model.ReviewProgress{}).
+			Distinct("review_progresses.word_id").
+			Joins(fmt.Sprintf("JOIN %s ON %s.id = review_progresses.word_id", wordTable, wordTable)).
+			Where(fmt.Sprintf("review_progresses.user_id = ? AND review_progresses.wordbook = ? AND %s.wordbook = ? AND %s.cycle = ?", wordTable, wordTable), userID, wordbook, wordbook, cycle.CycleNo).
+			Count(&knownWords).Error; err != nil {
+			return nil, fmt.Errorf("count known cycle words: %w", err)
+		}
+
+		result = append(result, CycleSummary{
+			CycleID:    cycle.ID,
+			Status:     cycle.Status,
+			CreatedAt:  cycle.CreatedAt,
+			TotalWords: totalWords,
+			KnownWords: knownWords,
+		})
 	}
 	return result, nil
 }
@@ -376,9 +371,13 @@ func GetCycleWordsByID(userID, wordbook string, cycleID uint) (*CycleDetail, err
 	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
 		return nil, err
 	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
+		return nil, err
+	}
 
 	var cycle model.Cycle
-	if err := db.DB.
+	if err = db.DB.
 		Where("id = ? AND user_id = ? AND wordbook = ?", cycleID, userID, wordbook).
 		First(&cycle).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -387,24 +386,38 @@ func GetCycleWordsByID(userID, wordbook string, cycleID uint) (*CycleDetail, err
 		return nil, fmt.Errorf("query cycle: %w", err)
 	}
 
-	type row struct {
-		Term   string
-		Status string
-	}
-	var rows []row
-	if err := db.DB.
-		Table("word_cycles").
-		Select("words.term, word_cycles.status").
-		Joins("JOIN words ON words.id = word_cycles.word_id").
-		Where("word_cycles.cycle_id = ?", cycle.ID).
-		Order("word_cycles.sort_order ASC, words.source_order ASC").
-		Scan(&rows).Error; err != nil {
+	var wordsInCycle []model.Word
+	if err := db.DB.Table(wordTable).
+		Where("wordbook = ? AND cycle = ?", wordbook, cycle.CycleNo).
+		Order("source_order ASC").
+		Find(&wordsInCycle).Error; err != nil {
 		return nil, fmt.Errorf("query cycle words: %w", err)
 	}
 
-	words := make([]CurrentCycleWord, len(rows))
-	for i, r := range rows {
-		words[i] = CurrentCycleWord{Term: r.Term, Status: r.Status}
+	wordIDs := make([]uint, 0, len(wordsInCycle))
+	for _, w := range wordsInCycle {
+		wordIDs = append(wordIDs, w.ID)
+	}
+	knownSet := make(map[uint]struct{}, len(wordIDs))
+	if len(wordIDs) > 0 {
+		var knownIDs []uint
+		if err := db.DB.Model(&model.ReviewProgress{}).
+			Where("user_id = ? AND wordbook = ? AND word_id IN ?", userID, wordbook, wordIDs).
+			Pluck("word_id", &knownIDs).Error; err != nil {
+			return nil, fmt.Errorf("query known words: %w", err)
+		}
+		for _, id := range knownIDs {
+			knownSet[id] = struct{}{}
+		}
+	}
+
+	words := make([]CurrentCycleWord, 0, len(wordsInCycle))
+	for _, w := range wordsInCycle {
+		status := "new"
+		if _, ok := knownSet[w.ID]; ok {
+			status = "known"
+		}
+		words = append(words, CurrentCycleWord{Term: w.Term, Status: status})
 	}
 
 	return &CycleDetail{
@@ -421,9 +434,13 @@ func GetCurrentCycleWords(userID, wordbook string) ([]CurrentCycleWord, error) {
 	if err := ensureUserCyclesFromAdmin(userID, wordbook); err != nil {
 		return nil, err
 	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
+		return nil, err
+	}
 
 	var cycle model.Cycle
-	err := db.DB.
+	err = db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&cycle).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -433,24 +450,38 @@ func GetCurrentCycleWords(userID, wordbook string) ([]CurrentCycleWord, error) {
 		return nil, fmt.Errorf("query ongoing cycle: %w", err)
 	}
 
-	type row struct {
-		Term   string
-		Status string
-	}
-	var rows []row
-	if err := db.DB.
-		Table("word_cycles").
-		Select("words.term, word_cycles.status").
-		Joins("JOIN words ON words.id = word_cycles.word_id").
-		Where("word_cycles.cycle_id = ?", cycle.ID).
-		Order("word_cycles.sort_order ASC, words.source_order ASC").
-		Scan(&rows).Error; err != nil {
+	var wordsInCycle []model.Word
+	if err := db.DB.Table(wordTable).
+		Where("wordbook = ? AND cycle = ?", wordbook, cycle.CycleNo).
+		Order("source_order ASC").
+		Find(&wordsInCycle).Error; err != nil {
 		return nil, fmt.Errorf("query cycle words: %w", err)
 	}
 
-	result := make([]CurrentCycleWord, len(rows))
-	for i, r := range rows {
-		result[i] = CurrentCycleWord{Term: r.Term, Status: r.Status}
+	wordIDs := make([]uint, 0, len(wordsInCycle))
+	for _, w := range wordsInCycle {
+		wordIDs = append(wordIDs, w.ID)
+	}
+	knownSet := make(map[uint]struct{}, len(wordIDs))
+	if len(wordIDs) > 0 {
+		var knownIDs []uint
+		if err := db.DB.Model(&model.ReviewProgress{}).
+			Where("user_id = ? AND wordbook = ? AND word_id IN ?", userID, wordbook, wordIDs).
+			Pluck("word_id", &knownIDs).Error; err != nil {
+			return nil, fmt.Errorf("query known words: %w", err)
+		}
+		for _, id := range knownIDs {
+			knownSet[id] = struct{}{}
+		}
+	}
+
+	result := make([]CurrentCycleWord, 0, len(wordsInCycle))
+	for _, w := range wordsInCycle {
+		status := "new"
+		if _, ok := knownSet[w.ID]; ok {
+			status = "known"
+		}
+		result = append(result, CurrentCycleWord{Term: w.Term, Status: status})
 	}
 	return result, nil
 }
@@ -461,15 +492,13 @@ type UpdateCurrentCycleResult struct {
 	Results []WordValidationResult `json:"results"`
 }
 
-// UpdateCurrentCycle replaces the word list of the user's ongoing cycle.
-//   - Words kept in the new list retain their existing status (new / known).
-//   - Words added for the first time are inserted with status "new".
-//   - Words removed are deleted from word_cycles.
-//   - If after the update all remaining words are "known", the cycle is completed.
-//
-// "already_used" check only applies to OTHER cycles, not the current one.
+// UpdateCurrentCycle replaces the word list of the user's ongoing cycle by rewriting word table cycle values.
 func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrentCycleResult, error) {
 	if err := wb.ValidateEnabled(wordbook); err != nil {
+		return nil, err
+	}
+	wordTable, err := db.ResolveWordTableName(wordbook)
+	if err != nil {
 		return nil, err
 	}
 
@@ -489,7 +518,7 @@ func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrent
 
 	// Find the ongoing cycle.
 	var cycle model.Cycle
-	err := db.DB.
+	err = db.DB.
 		Where("user_id = ? AND wordbook = ? AND status = ?", userID, wordbook, "ongoing").
 		First(&cycle).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -506,7 +535,7 @@ func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrent
 
 	// Batch-query words table.
 	var matchedWords []model.Word
-	if err := db.DB.
+	if err := db.DB.Table(wordTable).
 		Where("wordbook = ? AND LOWER(term) IN ?", wordbook, lowerTerms).
 		Find(&matchedWords).Error; err != nil {
 		return nil, fmt.Errorf("query words: %w", err)
@@ -520,11 +549,9 @@ func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrent
 	usedWordIDs := make(map[uint]struct{})
 	var usedIDs []uint
 	if err := db.DB.
-		Table("word_cycles").
-		Select("word_cycles.word_id").
-		Joins("JOIN cycles ON cycles.id = word_cycles.cycle_id").
-		Where("cycles.user_id = ? AND cycles.wordbook = ? AND cycles.id != ?", userID, wordbook, cycle.ID).
-		Scan(&usedIDs).Error; err != nil {
+		Table(wordTable).
+		Where("wordbook = ? AND cycle > 0 AND cycle != ?", wordbook, cycle.CycleNo).
+		Pluck("id", &usedIDs).Error; err != nil {
 		return nil, fmt.Errorf("query used word ids: %w", err)
 	}
 	for _, id := range usedIDs {
@@ -554,70 +581,23 @@ func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrent
 		return &UpdateCurrentCycleResult{Ok: false, Results: results}, nil
 	}
 
-	// Load existing word_cycles to preserve status for unchanged words.
-	type existingWC struct {
-		WordID uint
-		Status string
-	}
-	var existingWCs []existingWC
-	if err := db.DB.
-		Table("word_cycles").
-		Select("word_id, status").
-		Where("cycle_id = ?", cycle.ID).
-		Scan(&existingWCs).Error; err != nil {
-		return nil, fmt.Errorf("query existing word_cycles: %w", err)
-	}
-	existingMap := make(map[uint]string, len(existingWCs))
-	for _, wc := range existingWCs {
-		existingMap[wc.WordID] = wc.Status
-	}
-
-	// New word ID set.
-	newWordIDSet := make(map[uint]struct{}, len(validWords))
+	newWordIDs := make([]uint, 0, len(validWords))
 	for _, w := range validWords {
-		newWordIDSet[w.ID] = struct{}{}
+		newWordIDs = append(newWordIDs, w.ID)
 	}
 
 	// Apply changes in a transaction.
 	if err := db.DB.Transaction(func(tx *gorm.DB) error {
-		// Remove words that are no longer in the list.
-		toRemove := make([]uint, 0)
-		for id := range existingMap {
-			if _, keep := newWordIDSet[id]; !keep {
-				toRemove = append(toRemove, id)
-			}
+		if err := tx.Table(wordTable).
+			Where("wordbook = ? AND cycle = ?", wordbook, cycle.CycleNo).
+			Update("cycle", 0).Error; err != nil {
+			return fmt.Errorf("clear current cycle words: %w", err)
 		}
-		if len(toRemove) > 0 {
-			if err := tx.Where("cycle_id = ? AND word_id IN ?", cycle.ID, toRemove).
-				Delete(&model.WordCycle{}).Error; err != nil {
-				return fmt.Errorf("delete removed word_cycles: %w", err)
-			}
-		}
-
-		// Add words that are new to this cycle.
-		toAdd := make([]model.WordCycle, 0)
-		for i, w := range validWords {
-			if _, exists := existingMap[w.ID]; !exists {
-				toAdd = append(toAdd, model.WordCycle{
-					WordID:    w.ID,
-					CycleID:   cycle.ID,
-					SortOrder: i + 1,
-					Status:    "new",
-				})
-			}
-		}
-		if len(toAdd) > 0 {
-			if err := tx.Create(&toAdd).Error; err != nil {
-				return fmt.Errorf("insert new word_cycles: %w", err)
-			}
-		}
-
-		// Reorder all remaining words by the submitted order.
-		for i, w := range validWords {
-			if err := tx.Model(&model.WordCycle{}).
-				Where("cycle_id = ? AND word_id = ?", cycle.ID, w.ID).
-				Update("sort_order", i+1).Error; err != nil {
-				return fmt.Errorf("reorder word_cycles: %w", err)
+		if len(newWordIDs) > 0 {
+			if err := tx.Table(wordTable).
+				Where("wordbook = ? AND id IN ?", wordbook, newWordIDs).
+				Update("cycle", cycle.CycleNo).Error; err != nil {
+				return fmt.Errorf("assign updated cycle words: %w", err)
 			}
 		}
 		return nil
@@ -626,19 +606,27 @@ func UpdateCurrentCycle(userID, wordbook string, terms []string) (*UpdateCurrent
 	}
 
 	// If all remaining words are known, complete the cycle.
-	var newCount int64
-	if err := db.DB.Model(&model.WordCycle{}).
-		Where("cycle_id = ? AND status = ?", cycle.ID, "new").
-		Count(&newCount).Error; err != nil {
+	var totalWords int64
+	if err := db.DB.Table(wordTable).
+		Where("wordbook = ? AND cycle = ?", wordbook, cycle.CycleNo).
+		Count(&totalWords).Error; err != nil {
 		return nil, err
 	}
-	if newCount == 0 {
-		var cycleWordCount int64
-		db.DB.Model(&model.WordCycle{}).Where("cycle_id = ?", cycle.ID).Count(&cycleWordCount)
-		db.DB.Model(&cycle).Update("status", "completed")
-		db.DB.Model(&model.UserProgress{}).
-			Where("user_id = ? AND wordbook = ?", userID, wordbook).
-			UpdateColumn("completed_count", gorm.Expr("completed_count + ?", cycleWordCount))
+	if totalWords > 0 {
+		var knownWords int64
+		if err := db.DB.Model(&model.ReviewProgress{}).
+			Distinct("review_progresses.word_id").
+			Joins(fmt.Sprintf("JOIN %s ON %s.id = review_progresses.word_id", wordTable, wordTable)).
+			Where(fmt.Sprintf("review_progresses.user_id = ? AND review_progresses.wordbook = ? AND %s.wordbook = ? AND %s.cycle = ?", wordTable, wordTable), userID, wordbook, wordbook, cycle.CycleNo).
+			Count(&knownWords).Error; err != nil {
+			return nil, err
+		}
+		if knownWords >= totalWords {
+			db.DB.Model(&cycle).Update("status", "completed")
+			db.DB.Model(&model.UserProgress{}).
+				Where("user_id = ? AND wordbook = ?", userID, wordbook).
+				UpdateColumn("completed_count", gorm.Expr("completed_count + ?", totalWords))
+		}
 	}
 
 	return &UpdateCurrentCycleResult{Ok: true, Results: results}, nil

@@ -4,6 +4,7 @@
       "code": "KET",
       "shortName": "KET",
       "fullName": "A2 Key for Schools",
+      "cardProfile": "en-zh-flip-v1",
       "jsonPath": "ket-a2-key.enriched.json",
       "importer": "ket_enriched_v1",
       "enabled": true
